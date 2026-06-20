@@ -43,7 +43,7 @@ arquivo_selecionado = lista_regioes_arquivos[index_selecionado]
 
 @st.cache_data
 def carregar_dados(caminho_arquivo):
-    return pd.read_csv(caminho_arquivo, delimiter=';', encoding='latin-1')
+    return pd.read_csv(caminho_arquivo, delimiter=',', encoding='latin-1')
 
 try:
     df_filtrado = carregar_dados(arquivo_selecionado)
@@ -123,7 +123,7 @@ def gerar_pdf():
     story.append(Spacer(1, 15))
     story.append(Image(img_buf, width=460, height=230))
     
-    doc.build(pdf_buf)
+    doc.build(story)
     pdf_buf.seek(0)
     return pdf_buf
 
