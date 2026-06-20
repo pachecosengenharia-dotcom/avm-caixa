@@ -43,7 +43,25 @@ arquivo_selecionado = lista_regioes_arquivos[index_selecionado]
 
 @st.cache_data
 def carregar_dados(caminho_arquivo):
-    return pd.read_csv(caminho_arquivo, delimiter=';', encoding='latin-1')
+    try:
+        df = pd.read_csv(caminho_arquivo, delimiter=';', encoding='latin-1')
+        if len(df.columns) <= 1:
+            df = pd.read_csv(caminho_arquivo, delimiter=',', encoding='latin-1')
+    except:
+        df = pd.read_csv(caminho_arquivo, delimiter=',', encoding='latin-1')
+        
+    colunas_numericas = ['Preco', 'Area', 'Quartos', 'Vagas', 'Conservacao', 'Setor_Urbano']
+    for col in colunas_numericas:
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.replace('R$', '', regex=False)
+            df[col] = df[col].str.replace(' ', '', regex=False)
+            if df[col].str.contains(',').any() and df[col].str.contains('\.').any():
+                df[col] = df[col].str.replace('.', '', regex=False)
+            df[col] = df[col].str.replace(',', '.', regex=False)
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+            
+    df = df.dropna(subset=['Preco', 'Area', 'Setor_Urbano'])
+    return df
 
 try:
     df_filtrado = carregar_dados(arquivo_selecionado)
