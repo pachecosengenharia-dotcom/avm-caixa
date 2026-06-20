@@ -123,7 +123,7 @@ def gerar_pdf():
     story.append(Spacer(1, 15))
     story.append(Image(img_buf, width=460, height=230))
     
-    doc.build(story)
+    doc.build(pdf_buf)
     pdf_buf.seek(0)
     return pdf_buf
 
