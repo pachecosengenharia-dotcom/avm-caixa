@@ -525,8 +525,16 @@ with aba_repositorio:
     df_repositorio = pd.read_sql_query(query_filtro, conn_rep, params=params)
 
     if not df_repositorio.empty:
-        st.dataframe(df_repositorio, use_container_width=True)
-        base_selecionada_id = st.selectbox("Selecione o ID da base para carregar no Motor AVM (Aba 2):", df_repositorio['id'].tolist())
+        # Cria uma descrição clara e única para cada base para evitar conflitos no selectbox
+        df_repositorio['descricao_base'] = df_repositorio.apply(
+            lambda row: f"ID {row['id']} — {row['municipio']} ({row['tipologia']} | {row['origem_dado']})", axis=1
+        )
+        
+        st.dataframe(df_repositorio[['id', 'municipio', 'tipologia', 'origem_dado']], use_container_width=True)
+        
+        base_escolhida_str = st.selectbox("Selecione a Base para carregar no Motor AVM (Aba 2):", df_repositorio['descricao_base'].tolist())
+        base_selecionada_id = int(base_escolhida_str.split("—")[0].replace("ID", "").strip())
+
         if st.button("🚀 Carregar Base Selecionada para o Motor AVM"):
             cursor = conn_rep.cursor()
             cursor.execute("SELECT dados_json FROM base_centralizada WHERE id = ?", (base_selecionada_id,))
