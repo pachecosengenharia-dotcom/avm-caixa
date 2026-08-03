@@ -495,28 +495,36 @@ with aba_repositorio:
             df_prop = pd.read_csv(arq_prop, encoding='latin1', sep=None, engine='python', on_bad_lines='skip') if arq_prop.name.endswith('.csv') else pd.read_excel(arq_prop)
             df_prop.columns = [str(c).strip().replace(" ", "_").lower() for c in df_prop.columns]
             
-            st.markdown("#### 📋 Prévia das Variáveis Identificadas Automaticamente:")
+            total_linhas_arq = len(df_prop)
+            st.info(f"📊 Planilha lida com sucesso contendo **{total_linhas_arq} registros** e {len(df_prop.columns)} colunas.")
             st.dataframe(df_prop.head(), use_container_width=True)
 
-            if st.button("💾 Salvar Planilha Completa no Repositório Central"):
+            if st.button("💾 Salvar Planilha no Repositório Central"):
                 json_str = df_prop.to_json(orient='records', force_ascii=False)
                 conn_rep.execute('''
                     INSERT INTO base_centralizada (municipio, tipologia, origem_dado, dados_json)
                     VALUES (?, ?, ?, ?)
                 ''', (mun_p, tipo_p, origem_p, json_str))
                 conn_rep.commit()
-                st.success("✅ Planilha salva e integrada com sucesso no Repositório Central!")
+                st.success(f"✅ Planilha com {total_linhas_arq} registros salva com sucesso no Repositório Central!")
                 st.rerun()
         except Exception as e:
             st.error(f"❌ Erro ao ler planilha: {str(e)}")
 
     st.markdown("---")
-    st.markdown("### 📂 Bases Cadastradas no Repositório Central")
+    col_l1, col_l2 = st.columns([3, 1])
+    col_l1.markdown("### 📂 Bases Cadastradas no Repositório Central")
+    if col_l2.button("🧹 Limpar / Apagar Histórico de Bases"):
+        conn_rep.execute("DROP TABLE IF EXISTS base_centralizada")
+        conn_rep.commit()
+        st.success("Acervo limpo com sucesso! Recarregue a página.")
+        st.rerun()
+
     col_rep1, col_rep2 = st.columns(2)
     filtro_mun = col_rep1.text_input("Filtrar por Município:", value="Goiânia")
     filtro_tipo = col_rep2.selectbox("Filtrar por Tipologia:", ["Todas", "Casa", "Apartamento", "Lote", "Galpão Comercial"])
 
-    query_filtro = "SELECT id, municipio, tipologia, origem_dado FROM base_centralizada WHERE municipio LIKE ?"
+    query_filtro = "SELECT id, municipio, tipologia, origem_dado, dados_json FROM base_centralizada WHERE municipio LIKE ?"
     params = [f"%{filtro_mun}%"]
     if filtro_tipo != "Todas":
         query_filtro += " AND tipologia = ?"
@@ -525,15 +533,20 @@ with aba_repositorio:
     df_repositorio = pd.read_sql_query(query_filtro, conn_rep, params=params)
 
     if not df_repositorio.empty:
-        # Cria uma descrição clara e única para cada base para evitar conflitos no selectbox
+        # Calcula o número real de linhas de cada base JSON salva
+        df_repositorio['qtd_dados'] = df_repositorio['dados_json'].apply(lambda x: len(json.loads(x)) if x else 0)
+        
+        # Cria uma descrição limpa mostrando o número real de linhas/dados
         df_repositorio['descricao_base'] = df_repositorio.apply(
-            lambda row: f"ID {row['id']} — {row['municipio']} ({row['tipologia']} | {row['origem_dado']})", axis=1
+            lambda row: f"Base ID {row['id']} — {row['municipio']} ({row['tipologia']} | {row['origem_dado']}) — [{row['qtd_dados']} dados]", axis=1
         )
         
-        st.dataframe(df_repositorio[['id', 'municipio', 'tipologia', 'origem_dado']], use_container_width=True)
+        st.dataframe(df_repositorio[['id', 'municipio', 'tipologia', 'origem_dado', 'qtd_dados']], use_container_width=True)
         
         base_escolhida_str = st.selectbox("Selecione a Base para carregar no Motor AVM (Aba 2):", df_repositorio['descricao_base'].tolist())
-        base_selecionada_id = int(base_escolhida_str.split("—")[0].replace("ID", "").strip())
+        
+        # Extrai o ID numérico correto da string selecionada
+        base_selecionada_id = int(base_escolhida_str.split("—")[0].replace("Base ID", "").strip())
 
         if st.button("🚀 Carregar Base Selecionada para o Motor AVM"):
             cursor = conn_rep.cursor()
@@ -542,7 +555,7 @@ with aba_repositorio:
             if res_json and res_json[0]:
                 df_carregado = pd.read_json(io.StringIO(res_json[0]), orient='records')
                 st.session_state.df_dinamico = df_carregado
-                st.success(f"✅ Base ID {base_selecionada_id} carregada com sucesso para o Motor AVM na Aba 2!")
+                st.success(f"✅ Base carregada com sucesso contendo `{len(df_carregado)}` registros para o Motor AVM na Aba 2!")
     else:
         st.info("ℹ️ Nenhuma base cadastrada com este filtro.")
     conn_rep.close()
