@@ -154,7 +154,7 @@ if teste_expirado:
     st.stop()
 
 # =====================================================================
-# PARSER RIGOROSO DE LEITURA DE PDFS (CERTIDÕES E ORDEM DE SERVIÇO)
+# PARSER ROBUSTO E FLEXÍVEL PARA PDFS E IMAGENS (CERTIDÕES & OS)
 # =====================================================================
 def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     texto_total = ""
@@ -163,17 +163,22 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
         texto_arquivo = ""
         try:
             bytes_arq = arquivo.read()
-            with pdfplumber.open(io.BytesIO(bytes_arq)) as pdf:
-                for pagina in pdf.pages:
-                    txt = pagina.extract_text()
-                    if txt: texto_arquivo += txt + "\n"
-            if not texto_arquivo.strip():
-                imagens = convert_from_bytes(bytes_arq, dpi=150)
-                for img in imagens:
-                    texto_arquivo += pytesseract.image_to_string(img, lang='por') + "\n"
-                logs_execucao.append(f"Arquivo `{arquivo.name}` processado via OCR.")
+            if arquivo.name.lower().endswith(('.png', '.jpg', '.jpeg')):
+                img_pil = PILImage.open(io.BytesIO(bytes_arq))
+                texto_arquivo = pytesseract.image_to_string(img_pil, lang='por') + "\n"
+                logs_execucao.append(f"Imagem `{arquivo.name}` processada via OCR.")
             else:
-                logs_execucao.append(f"Arquivo `{arquivo.name}` lido via texto nativo.")
+                with pdfplumber.open(io.BytesIO(bytes_arq)) as pdf:
+                    for pagina in pdf.pages:
+                        txt = pagina.extract_text()
+                        if txt: texto_arquivo += txt + "\n"
+                if not texto_arquivo.strip():
+                    imagens = convert_from_bytes(bytes_arq, dpi=150)
+                    for img in imagens:
+                        texto_arquivo += pytesseract.image_to_string(img, lang='por') + "\n"
+                    logs_execucao.append(f"PDF `{arquivo.name}` processado via OCR.")
+                else:
+                    logs_execucao.append(f"PDF `{arquivo.name}` lido via texto nativo.")
         except Exception as e:
             logs_execucao.append(f"Erro em `{arquivo.name}`: {str(e)}")
         texto_total += texto_arquivo + "\n"
@@ -183,19 +188,25 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
 
     variaveis_encontradas = {}
     
-    # 1. Captura exata do número da OS / Referência (evitando poluição de texto)
+    # Extração segura e flexível da OS / Referência
     ref_match = re.search(r'(?:Refer[êe]ncia|OS|Ordem\s+de\s+Serviço|Ref)[:\s#]*([A-Za-z0-9\.\/\-]+)', texto_total, re.IGNORECASE)
     os_extraida = ref_match.group(1).strip() if ref_match else "OS-001"
 
-    # 2. Captura limpa do Nome do Informante (limitando a palavras estritamente de nome)
-    inf_match = re.search(r'(?:Informante|Contato|Respons[áa]vel)[:\s]+([A-Z\u00C0-\u00DD\s]{3,25})(?=\s+(?:Tel|Telefone|Cel|Email|Endereço|$))', texto_total, re.IGNORECASE)
+    # Extração limpa do Informante
+    inf_match = re.search(r'(?:Informante|Contato|Respons[áa]vel)[:\s]+([A-Z\u00C0-\u00DD\s]{3,30})', texto_total, re.IGNORECASE)
     informante_extraido = inf_match.group(1).strip() if inf_match else "ROBERT"
+    if "Telefone" in informante_extraido:
+        informante_extraido = informante_extraido.split("Telefone")[0].strip()
 
-    # 3. Captura isolada e precisa do Telefone (padrão brasileiro com DDD)
+    # Extração isolada do Telefone
     tel_match = re.search(r'(?:Tel|Telefone|Cel|Contato)[:\s]*(\(?\d{2}\)?\s*\d{4,5}[-\s]?\d{4})', texto_total, re.IGNORECASE)
-    telefone_extraido = tel_match.group(1).strip() if tel_match else "(62) 99999-9999"
+    telefone_extraido = tel_match.group(1).strip() if telefone_extraido = tel_match.group(1).strip() if tel_match else "(62) 99999-9999"
+    if not tel_match:
+        # Busca genérica por padrão de telefone se o rótulo falhar
+        tel_gen = re.search(r'\(?\d{2}\)?\s*\d{4,5}[-\s]?\d{4}', texto_total)
+        telefone_extraido = tel_gen.group(0).strip() if tel_gen else "(62) 99999-9999"
 
-    # 4. Endereço e Bairro
+    # Endereço e Bairro
     bairro_match = re.search(r'(?:Bairro|Setor)[:\s]+([A-Za-z\u00C0-\u00FF\s]+?)(?=\s*-\s*[A-Z]{2}|\s*CEP:|$)', texto_total, re.IGNORECASE)
     bairro_extraido = bairro_match.group(1).strip() if bairro_match else "Jardim Buriti Sereno"
 
@@ -208,12 +219,20 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     elif "lote" in t_lower and "terreno" in t_lower: tipologia_detectada = "Lote"
     elif "apartamento" in t_lower: tipologia_detectada = "Apartamento"
 
-    # 5. Captura precisa de atributos da certidão/matrícula (Áreas, Quartos, Suítes, Banheiros)
+    # Conversão numérica tolerante a falhas (Evita ValueError)
+    def converter_valor_num(match_obj, val_padrao):
+        if not match_obj: return val_padrao
+        try:
+            s_val = match_obj.group(1).strip().replace('.', '').replace(',', '.')
+            return float(s_val)
+        except:
+            return val_padrao
+
     match_ap = re.search(r'(?:[áa]rea\s+(?:privativa\s+coberta|privativa|constru[íi]da))[:\s]*([0-9\.,]+)', texto_total, re.IGNORECASE)
-    variaveis_encontradas['area_privativa'] = float(match_ap.group(1).replace('.', '').replace(',', '.')) if match_ap else 82.33
+    variaveis_encontradas['area_privativa'] = converter_valor_num(match_ap, 82.33)
 
     match_at = re.search(r'(?:[áa]rea\s+(?:do\s+terreno|total\s+do\s+terreno|do\s+lote|fra[çc][ãa]o))[:\s]*([0-9\.,]+)', texto_total, re.IGNORECASE)
-    variaveis_encontradas['area_terreno'] = float(match_at.group(1).replace('.', '').replace(',', '.')) if match_at else 197.25
+    variaveis_encontradas['area_terreno'] = converter_valor_num(match_at, 197.25)
 
     match_qt = re.search(r'([0-9]+)\s*(?:quartos|dormit[óo]rios)', texto_total, re.IGNORECASE)
     variaveis_encontradas['quartos'] = int(match_qt.group(1)) if match_qt else 2
@@ -224,7 +243,7 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     match_banh = re.search(r'([0-9]+)\s*banheiros?', texto_total, re.IGNORECASE)
     variaveis_encontradas['banheiros'] = int(match_banh.group(1)) if match_banh else 2
 
-    logs_execucao.append(f"Leitura de documentos executada com sucesso: OS = {os_extraida}, Contato = {informante_extraido}")
+    logs_execucao.append(f"Leitura concluída com sucesso: OS = {os_extraida}")
     return variaveis_encontradas, os_extraida, endereco_extraido, informante_extraido, telefone_extraido, tipologia_detectada, logs_execucao
 
 def verificar_micronumerosidade(df, features_selecionadas, classificacoes_var):
@@ -507,8 +526,8 @@ with aba_avm:
     
     col_up1, col_up2 = st.columns(2)
     with col_up1:
-        st.markdown("#### Documentação do Imóvel (PDF)")
-        documentos_enviados = st.file_uploader("Certidão, Matrícula, OS em PDF", type=["pdf"], key="uploader_multiplos", accept_multiple_files=True)
+        st.markdown("#### Documentação do Imóvel (PDF/Imagem)")
+        documentos_enviados = st.file_uploader("Certidão, Matrícula, OS em PDF ou Imagem", type=["pdf", "png", "jpg", "jpeg"], key="uploader_multiplos", accept_multiple_files=True)
         if documentos_enviados:
             st.markdown(f"🟢 **{len(documentos_enviados)} documento(s) anexado(s)!**")
             if st.button("🔍 Processar Leitura Automática e Relatório de Auditoria"):
@@ -521,7 +540,7 @@ with aba_avm:
                     if inf_ex: st.session_state.informante_auto = inf_ex
                     if tel_ex: st.session_state.telefone_auto = tel_ex
                     for k, v in d_ext.items(): st.session_state.valores_manuais[k] = v
-                    st.success("✨ Leitura e preenchimento automático das variáveis e atributos concluídos!")
+                    st.success("✨ Leitura e preenchimento automático concluídos!")
                     st.rerun()
 
     with col_up2:
