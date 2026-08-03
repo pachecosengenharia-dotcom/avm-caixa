@@ -206,8 +206,8 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
         if termo in informante_extraido:
             informante_extraido = informante_extraido.split(termo)[0].strip()
 
-    # 3. Telefone Corrigido e Preciso
-    tel_match = re.search(r'(?:Tel|Telefone|Cel|Contato)[^\d]*(\(?\d{2}\)?\s*\d{4,5}[-\s]?\d{4})', texto_total, re.IGNORECASE)
+    # 3. Telefone do Contato - Captura exata focada no rótulo específico
+    tel_match = re.search(r'(?:Telefone\s+do\s+Contato|Tel(?:efone)?\s*(?:do\s+Contato)?|Cel(?:ular)?|Contato)[:\s]*(\(?\d{2}\)?\s*\d{4,5}[-\s]?\d{4})', texto_total, re.IGNORECASE)
     if tel_match:
         telefone_extraido = tel_match.group(1).strip()
     else:
