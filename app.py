@@ -706,7 +706,7 @@ with aba_avm:
                         for log_r in logs_rec: st.success(log_r)
                         st.rerun()
                 else:
-                    st.success("✅ Nenhuma restrição de micronumerosidade encontrada nas variáveis dicotômicas, códigos ou proxies.")
+                    st.success("✅ Nenhuma restrição de micronumerosidade encontrada nas variáveis dicotômicas, códigos alocados e proxy temporal.")
 
                 df_modelo_final, cooks_d_arr, limite_cook_val = calcular_distancia_cook_e_filtrar(df_modelo_teste, col_alvo_temp, features_selecionadas)
                 st.info(f"📊 **Filtro de Distância de Cook aplicado:** {len(df_modelo_final)} comparáveis válidos mantidos (Limite de corte: {limite_cook_val:.4f}).")
