@@ -297,52 +297,57 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     logs_execucao.append(f"Leitura concluída com sucesso: OS = {os_extraida}")
     return variaveis_encontradas, os_extraida, end_completo, informante_extraido, telefone_extraido, tipologia_detectada, logs_execucao
 
-def verificar_micronumerosidade_automatico(df, features_selecionadas):
+def verificar_micronumerosidade_condicionado(df, features_selecionadas, classificacoes_var):
     """
-    Avalia automaticamente todas as variáveis selecionadas (especialmente as discretas/inteiras)
-    verificando se alguma categoria possui menos de 10% da amostra total.
+    Saneamento de micronumerosidade rigorosamente condicionado às variáveis:
+    Dicotômica, Código Alocado e Proxy Temporal.
     """
     alertas = []
     n_total = len(df)
+    tipos_saneaveis = ["Dicotômica", "Código Alocado", "Proxy Temporal"]
     for feat in features_selecionadas:
         if feat not in df.columns: continue
+        tipo_atual = classificacoes_var.get(feat, "Quantitativa")
+        if tipo_atual not in tipos_saneaveis: 
+            continue  # Ignora variáveis que não pertençam a estas categorias
         serie = df[feat]
-        # Se a variável tiver poucos valores únicos (ex: códigos, quartos, idade aparente inteira), analisa micronumerosidade
-        if serie.nunique() <= 15 or pd.api.types.is_integer_dtype(serie) or 'idade' in feat.lower() or 'quartos' in feat.lower():
-            for val in serie.unique():
-                contagem = (serie == val).sum()
-                percentual = (contagem / n_total) * 100 if n_total > 0 else 0
-                if percentual < 10.0:
-                    alertas.append(f"⚠️ **{feat}** (Valor `{val}`): {contagem} comparáveis (**{percentual:.1f}%** da amostra — Abaixo de 10%).")
+        for val in serie.unique():
+            contagem = (serie == val).sum()
+            percentual = (contagem / n_total) * 100 if n_total > 0 else 0
+            if percentual < 10.0:
+                alertas.append(f"⚠️ **{feat}** [{tipo_atual}] (Valor `{val}`): {contagem} comparáveis (**{percentual:.1f}%** da amostra — Abaixo de 10%).")
     return alertas
 
-def sanear_micronumerosidade_exato(df, features_selecionadas):
+def sanear_micronumerosidade_exato(df, features_selecionadas, classificacoes_var):
     df_saneado = df.copy()
     log_reclassificacoes = []
+    tipos_saneaveis = ["Dicotômica", "Código Alocado", "Proxy Temporal"]
     for feat in features_selecionadas:
         if feat not in df_saneado.columns: continue
+        tipo_atual = classificacoes_var.get(feat, "Quantitativa")
+        if tipo_atual not in tipos_saneaveis: 
+            continue
         serie = df_saneado[feat]
-        if serie.nunique() <= 15 or pd.api.types.is_integer_dtype(serie) or 'idade' in feat.lower() or 'quartos' in feat.lower():
-            valores_unicos = sorted(serie.unique())
-            for val in valores_unicos:
-                n_atual = len(df_saneado)
-                if n_atual == 0: break
-                contagem = (serie == val).sum()
-                percentual = (contagem / n_atual) * 100
-                if percentual < 10.0:
-                    meta_10 = int(np.ceil(0.10 * n_atual))
-                    defasagem = meta_10 - contagem
-                    valores_vizinhos = [v for v in valores_unicos if abs(float(v) - float(val)) == 1.0] if all(isinstance(v, (int, float, np.number)) for v in valores_unicos) else [v for v in valores_unicos if v != val]
-                    convertidos = 0
-                    for vizinho in valores_vizinhos:
-                        idx_vizinho = df_saneado[df_saneado[feat] == vizinho].index
-                        for idx in idx_vizinho:
-                            if convertidos < defasagem:
-                                df_saneado.loc[idx, feat] = val
-                                log_reclassificacoes.append(f"🔄 Atributo `{feat}` convertido de `{vizinho}` para `{val}`.")
-                                convertidos += 1
-                            else: break
-                        if convertidos >= defasagem: break
+        valores_unicos = sorted(serie.unique())
+        for val in valores_unicos:
+            n_atual = len(df_saneado)
+            if n_atual == 0: break
+            contagem = (serie == val).sum()
+            percentual = (contagem / n_atual) * 100
+            if percentual < 10.0:
+                meta_10 = int(np.ceil(0.10 * n_atual))
+                defasagem = meta_10 - contagem
+                valores_vizinhos = [v for v in valores_unicos if abs(float(v) - float(val)) == 1.0] if all(isinstance(v, (int, float, np.number)) for v in valores_unicos) else [v for v in valores_unicos if v != val]
+                convertidos = 0
+                for vizinho in valores_vizinhos:
+                    idx_vizinho = df_saneado[df_saneado[feat] == vizinho].index
+                    for idx in idx_vizinho:
+                        if convertidos < defasagem:
+                            df_saneado.loc[idx, feat] = val
+                            log_reclassificacoes.append(f"🔄 Atributo `{feat}` convertido de `{vizinho}` para `{val}`.")
+                            convertidos += 1
+                        else: break
+                    if convertidos >= defasagem: break
     return df_saneado, log_reclassificacoes
 
 def calcular_distancia_cook_e_filtrar(df, coluna_alvo, features):
@@ -527,10 +532,10 @@ with aba_repositorio:
                 df_prop = pd.read_csv(arq_prop, encoding='latin1', sep=None, engine='python', on_bad_lines='skip') if arq_prop.name.endswith('.csv') else pd.read_excel(arq_prop)
                 df_prop.columns = [str(c).strip().replace(" ", "_").lower() for c in df_prop.columns]
                 
-                # Conversão blindada de colunas para garantir formato numérico em todas as colunas possíveis
+                # Conversão robusta e segura para colunas numéricas
                 for col in df_prop.columns:
                     if col not in ['municipio', 'tipologia', 'origem_dado', 'endereco', 'data_do_evento', 'informante']:
-                        df_prop[col] = pd.to_numeric(df_prop[col].astype(str).str.replace(',', '.'), errors='ignore')
+                        df_prop[col] = pd.to_numeric(df_prop[col].astype(str).str.replace(',', '.'), errors='coerce')
 
                 total_linhas_arq = len(df_prop)
                 st.info(f"📊 Planilha lida com sucesso contendo **{total_linhas_arq} registros** e {len(df_prop.columns)} colunas.")
@@ -596,9 +601,9 @@ with aba_repositorio:
             res_json = cursor.fetchone()
             if res_json and res_json[0]:
                 df_carregado = pd.read_json(io.StringIO(res_json[0]), orient='records')
-                # Assegura tipagem numérica ao carregar para o motor AVM
                 for col in df_carregado.columns:
-                    df_carregado[col] = pd.to_numeric(df_carregado[col], errors='ignore')
+                    if col not in ['municipio', 'tipologia', 'origem_dado', 'endereco']:
+                        df_carregado[col] = pd.to_numeric(df_carregado[col], errors='coerce')
                 st.session_state.df_dinamico = df_carregado
                 st.success(f"✅ Base carregada com sucesso contendo `{len(df_carregado)}` registros para o Motor AVM!")
                 st.rerun()
@@ -648,31 +653,24 @@ with aba_avm:
 
     df_global = st.session_state.df_dinamico
     if df_global is not None and not df_global.empty:
-        # Garante conversão numérica de todas as colunas no editor
         for col in df_global.columns:
-            df_global[col] = pd.to_numeric(df_global[col], errors='ignore')
+            if col not in ['municipio', 'tipologia', 'origem_dado', 'endereco']:
+                df_global[col] = pd.to_numeric(df_global[col], errors='coerce')
 
         st.markdown("---")
         with st.expander("📝 Visualizar e Editar Planilha Carregada", expanded=False):
             df_editado_usuario = st.data_editor(df_global, num_rows="dynamic", key="editor_planilha_mercado")
             if df_editado_usuario is not None:
                 for col in df_editado_usuario.columns:
-                    df_editado_usuario[col] = pd.to_numeric(df_editado_usuario[col], errors='ignore')
+                    if col not in ['municipio', 'tipologia', 'origem_dado', 'endereco']:
+                        df_editado_usuario[col] = pd.to_numeric(df_editado_usuario[col], errors='coerce')
                 st.session_state.df_dinamico = df_editado_usuario
                 df_global = df_editado_usuario
 
         st.markdown("---")
         st.subheader("🤖 Configuração e Seleção de Variáveis Independentes")
         
-        # Identificação ampla de colunas numéricas ou convertíveis
-        colunas_candidatas = []
-        for c in df_global.columns:
-            if pd.api.types.is_numeric_dtype(df_global[c]) or df_global[c].dtype == object:
-                try:
-                    pd.to_numeric(df_global[c].dropna())
-                    colunas_candidatas.append(c)
-                except:
-                    pass
+        colunas_candidatas = [c for c in df_global.columns if pd.api.types.is_numeric_dtype(df_global[c]) or df_global[c].notnull().any()]
         if not colunas_candidatas:
             colunas_candidatas = df_global.columns.tolist()
 
@@ -799,24 +797,24 @@ with aba_avm:
                     st.success("✅ Nenhuma extrapolação identificada. Todos os atributos do imóvel avaliando estão dentro dos limites da amostra.")
 
                 # =====================================================
-                # MÓDULO DE SANEAMENTO AUTOMATIZADO
+                # MÓDULO DE SANEAMENTO CONDICIONADO À CLASSIFICAÇÃO
                 # =====================================================
                 st.markdown("---")
                 st.subheader("🧹 4. Saneamento de Micronumerosidade & Distância de Cook")
                 
-                # Executa verificação automática em tempo real nas variáveis selecionadas
-                alertas_micro = verificar_micronumerosidade_automatico(df_modelo_teste, features_selecionadas)
+                # Validação estrita condicionada às categorias solicitadas
+                alertas_micro = verificar_micronumerosidade_condicionado(df_modelo_teste, features_selecionadas, st.session_state.classificacoes_variaveis)
                 
                 if alertas_micro:
-                    st.warning("⚠️ **Alertas de Micronumerosidade detectados (Categorias abaixo de 10% da amostra):**")
+                    st.warning("⚠️ **Alertas de Micronumerosidade detectados (Variáveis Dicotômicas, Códigos Alocados ou Proxy Temporal com < 10%):**")
                     for alerta in alertas_micro:
                         st.markdown(alerta)
                     if st.button("🧹 Executar Saneamento Automático (Micronumerosidade)"):
-                        df_modelo_teste, logs_rec = sanear_micronumerosidade_exato(df_modelo_teste, features_selecionadas)
+                        df_modelo_teste, logs_rec = sanear_micronumerosidade_exato(df_modelo_teste, features_selecionadas, st.session_state.classificacoes_variaveis)
                         for log_r in logs_rec: st.success(log_r)
                         st.rerun()
                 else:
-                    st.success("✅ Nenhuma restrição de micronumerosidade encontrada nas categorias das variáveis selecionadas.")
+                    st.info("ℹ️ Saneamento condicionado ativo: classifique as variáveis acima como 'Dicotômica', 'Código Alocado' ou 'Proxy Temporal' para que o sistema valide a proporção mínima de 10% nas respectivas categorias.")
 
                 df_modelo_final, cooks_d_arr, limite_cook_val = calcular_distancia_cook_e_filtrar(df_modelo_teste, col_alvo_temp, features_selecionadas)
                 st.info(f"📊 **Filtro de Distância de Cook aplicado:** {len(df_modelo_final)} comparáveis válidos mantidos (Limite de corte: {limite_cook_val:.4f}).")
