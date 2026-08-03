@@ -155,7 +155,7 @@ if teste_expirado:
     st.stop()
 
 # =====================================================================
-# PROCESSAMENTO DE LEITURA OCR / CERTIDÕES 100% BLINDADO E COMPLETO
+# PROCESSAMENTO DE LEITURA OCR / CERTIDÕES (CORRIGIDO: CONDOMÍNIO + VARIÁVEIS)
 # =====================================================================
 def converter_extenso_para_numero(texto):
     mapa = {'um': 1, 'dois': 2, 'três': 3, 'quatro': 4, 'cinco': 5, 'seis': 6, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5}
@@ -218,7 +218,7 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
                 telefone_extraido = t_busca_match.group(0).strip()
                 break
 
-    # 4. Endereço Completo Integrado com Bairro, Condomínio, Município e UF
+    # 4. Endereço Completo & Extração do Nome do Condomínio
     end_completo = "Rua São Clemente, Quadra 334, Lote 17, Condomínio Residencial, Jardim Buriti Sereno, Goiânia - GO"
     end_match = re.search(r'(?:Endereço(?:\s+do\s+Imóvel)?|Imóvel situado|Localização)[:\s]+([^\n\r]+(?:\n[^\n\r]+){0,3})', texto_total, re.IGNORECASE)
     if end_match:
@@ -226,8 +226,12 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
         if len(end_extraido_bruto) > 10:
             end_completo = end_extraido_bruto
 
-    if "goiânia" not in end_completo.lower() and "go" not in end_completo.lower():
-        end_completo += ", Goiânia - GO"
+    # Procura pelo nome do condomínio / loteamento no documento para preenchimento preciso
+    condo_match = re.search(r'(?:Condom[íi]nio|Loteamento|Residencial)[:\s]+([A-Z\u00C0-\u00DD0-9\s]{3,40})', texto_total, re.IGNORECASE)
+    if condo_match:
+        nome_condominio = condo_match.group(1).strip()
+        if nome_condominio.lower() not in end_completo.lower():
+            end_completo += f" - Condomínio {nome_condominio}"
 
     tipologia_detectada = "Casa"
     t_lower = texto_total.lower()
@@ -243,11 +247,12 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
         except:
             return val_padrao
 
-    # Área Privativa
+    # Área Privativa / Construída
     match_ap = re.search(r'(?:[áa]rea\s+(?:privativa\s+coberta|privativa|constru[íi]da))[:\s]*([0-9\.,]+)', texto_total, re.IGNORECASE)
     variaveis_encontradas['area_privativa'] = converter_valor_num(match_ap, 82.33)
+    variaveis_encontradas['area_construida'] = variaveis_encontradas['area_privativa']
 
-    # Área do Terreno / Fração Ideal / Lote
+    # Área do Terreno / Lote / Fração
     match_at = re.search(r'(?:[áa]rea\s+(?:do\s+terreno|total\s+do\s+terreno|do\s+lote|fra[çc][ãa]o\s+ideal|terreno\s+fração|quota[- ]parte))[:\s]*([0-9\.,]+)', texto_total, re.IGNORECASE)
     if not match_at:
         match_at = re.search(r'fra[çc][ãa]o\s+ideal[^0-9]*([0-9\.,]+)', texto_total, re.IGNORECASE)
@@ -255,8 +260,10 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
         match_at = re.search(r'terreno[^0-9]*([0-9\.,]+)\s*m[2²]', texto_total, re.IGNORECASE)
     if not match_at:
         match_at = re.search(r'á[ée]rea\s+total[^0-9]*([0-9\.,]+)', texto_total, re.IGNORECASE)
-    variaveis_encontradas['area_terreno'] = converter_valor_num(match_at, 197.25)
-    variaveis_encontradas['area_do_terreno'] = variaveis_encontradas['area_terreno']
+    
+    val_terreno_extraido = converter_valor_num(match_at, 197.25)
+    variaveis_encontradas['area_terreno'] = val_terreno_extraido
+    variaveis_encontradas['area_do_terreno'] = val_terreno_extraido
 
     # Quartos / Dormitórios
     match_qt = re.search(r'([0-9]+|\b(?:um|dois|três|quatro|cinco)\b)\s*(?:quartos|dormit[óo]rios|c[ôo]modos)', texto_total, re.IGNORECASE)
@@ -706,7 +713,7 @@ with aba_avm:
                     max_am = df_modelo_teste[feat].max() if not df_modelo_teste[feat].empty else 0.0
                     limites_amostra_dict[feat] = f"[{min_am:.2f} a {max_am:.2f}]"
                     
-                    # Recupera o valor extraído pelo OCR buscando por variações do nome da feature
+                    # Mecanismo inteligente de busca de correspondência parcial para preencher os inputs automaticamente
                     val_sugerido = 0.0
                     feat_limpa = feat.lower().strip()
                     for chave_ocr, val_ocr in dados_ia.items():
