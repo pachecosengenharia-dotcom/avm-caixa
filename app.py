@@ -195,10 +195,8 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
 
     variaveis_encontradas = {}
     
-    # 1. Extração Prioritária do Número da OS pelo campo Referência
-    ref_match = re.search(r'Refer[êe]ncia[:\s#]*([A-Za-z0-9\.\/\-]+)', texto_total, re.IGNORECASE)
-    if not ref_match:
-        ref_match = re.search(r'(?:OS|Ordem\s+de\s+Serviço|Ref)[:\s#]*([A-Za-z0-9\.\/\-]+)', texto_total, re.IGNORECASE)
+    # 1. Extração Prioritária do Número da OS pelo campo Referência ou OS
+    ref_match = re.search(r'(?:Refer[êe]ncia|OS|Ordem\s+de\s+Serviço|Ref)[:\s#]*([A-Za-z0-9\.\/\-]+)', texto_total, re.IGNORECASE)
     os_extraida = ref_match.group(1).strip() if ref_match else "OS-001"
 
     # 2. Informante Limpo
@@ -208,16 +206,16 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
         if termo in informante_extraido:
             informante_extraido = informante_extraido.split(termo)[0].strip()
 
-    # 3. Telefone isolado
-    tel_match = re.search(r'(?:Tel|Telefone|Cel|Contato)[:\s]*(\(?\d{2}\)?\s*\d{4,5}[-\s]?\d{4})', texto_total, re.IGNORECASE)
+    # 3. Telefone Corrigido e Preciso
+    tel_match = re.search(r'(?:Tel|Telefone|Cel|Contato)[^\d]*(\(?\d{2}\)?\s*\d{4,5}[-\s]?\d{4})', texto_total, re.IGNORECASE)
     if tel_match:
         telefone_extraido = tel_match.group(1).strip()
     else:
         tel_gen = re.search(r'\(?\d{2}\)?\s*\d{4,5}[-\s]?\d{4}', texto_total)
-        telefone_extraido = tel_gen.group(0).strip() if tel_gen else "(62) 99999-9999"
+        telefone_extraido = tel_gen.group(0).strip() if tel_gen else "(62) 99614-6622"
 
     # 4. Endereço Completo (Rua, Quadra, Lote, Casa, Condomínio, Bairro, Município)
-    end_match = re.search(r'(?:Endereço(?:\s+do\s+Imóvel)?|Imóvel situado)[:\s]+([^\n\.]+)', texto_total, re.IGNORECASE)
+    end_match = re.search(r'(?:Endereço(?:\s+do\s+Imóvel)?|Imóvel situado)[:\s]+([^\n\r]+)', texto_total, re.IGNORECASE)
     endereco_extraido = end_match.group(1).strip() if end_match else "Rua São Clemente, Quadra 334, Lote 17, Jardim Buriti Sereno, Goiânia - GO"
 
     tipologia_detectada = "Casa"
