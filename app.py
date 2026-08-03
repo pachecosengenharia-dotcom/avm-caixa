@@ -155,7 +155,7 @@ if teste_expirado:
     st.stop()
 
 # =====================================================================
-# PROCESSAMENTO DE LEITURA OCR / CERTIDÕES (CORRIGIDO: CONDOMÍNIO + VARIÁVEIS)
+# PROCESSAMENTO DE LEITURA OCR / CERTIDÕES (BLINDADO)
 # =====================================================================
 def converter_extenso_para_numero(texto):
     mapa = {'um': 1, 'dois': 2, 'três': 3, 'quatro': 4, 'cinco': 5, 'seis': 6, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5}
@@ -218,7 +218,7 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
                 telefone_extraido = t_busca_match.group(0).strip()
                 break
 
-    # 4. Endereço Completo & Extração do Nome do Condomínio
+    # 4. Endereço Completo & Condomínio
     end_completo = "Rua São Clemente, Quadra 334, Lote 17, Condomínio Residencial, Jardim Buriti Sereno, Goiânia - GO"
     end_match = re.search(r'(?:Endereço(?:\s+do\s+Imóvel)?|Imóvel situado|Localização)[:\s]+([^\n\r]+(?:\n[^\n\r]+){0,3})', texto_total, re.IGNORECASE)
     if end_match:
@@ -226,7 +226,6 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
         if len(end_extraido_bruto) > 10:
             end_completo = end_extraido_bruto
 
-    # Procura pelo nome do condomínio / loteamento no documento para preenchimento preciso
     condo_match = re.search(r'(?:Condom[íi]nio|Loteamento|Residencial)[:\s]+([A-Z\u00C0-\u00DD0-9\s]{3,40})', texto_total, re.IGNORECASE)
     if condo_match:
         nome_condominio = condo_match.group(1).strip()
@@ -247,12 +246,12 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
         except:
             return val_padrao
 
-    # Área Privativa / Construída
+    # Área Privativa
     match_ap = re.search(r'(?:[áa]rea\s+(?:privativa\s+coberta|privativa|constru[íi]da))[:\s]*([0-9\.,]+)', texto_total, re.IGNORECASE)
     variaveis_encontradas['area_privativa'] = converter_valor_num(match_ap, 82.33)
     variaveis_encontradas['area_construida'] = variaveis_encontradas['area_privativa']
 
-    # Área do Terreno / Lote / Fração
+    # Área do Terreno / Fração
     match_at = re.search(r'(?:[áa]rea\s+(?:do\s+terreno|total\s+do\s+terreno|do\s+lote|fra[çc][ãa]o\s+ideal|terreno\s+fração|quota[- ]parte))[:\s]*([0-9\.,]+)', texto_total, re.IGNORECASE)
     if not match_at:
         match_at = re.search(r'fra[çc][ãa]o\s+ideal[^0-9]*([0-9\.,]+)', texto_total, re.IGNORECASE)
@@ -265,7 +264,7 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     variaveis_encontradas['area_terreno'] = val_terreno_extraido
     variaveis_encontradas['area_do_terreno'] = val_terreno_extraido
 
-    # Quartos / Dormitórios
+    # Quartos
     match_qt = re.search(r'([0-9]+|\b(?:um|dois|três|quatro|cinco)\b)\s*(?:quartos|dormit[óo]rios|c[ôo]modos)', texto_total, re.IGNORECASE)
     if match_qt:
         val_txt = match_qt.group(1)
@@ -295,7 +294,7 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     else:
         variaveis_encontradas['banheiros'] = 2.0
 
-    # Idade Aparente / Ano de Construção
+    # Idade Aparente
     match_idade = re.search(r'(?:idade\s+aparente|idade\s+do\s+im[óo]vel|ano\s+de\s+constru[çc][ãa]o|vida\s+[úu]til)[:\s]*([0-9]+)', texto_total, re.IGNORECASE)
     if match_idade:
         val_idade = float(match_idade.group(1))
@@ -673,10 +672,15 @@ with aba_avm:
             termos_exclusao = ['valor_unitario', 'vu', 'id']
             features_disponiveis = [c for c in colunas_numericas if c != col_valor_total and not any(t in c.lower() for t in termos_exclusao)]
 
+            # Inclui idade_aparente automaticamente na seleção padrão se ela estiver disponível nas colunas
+            default_features = [c for c in features_disponiveis if c != col_area_base][:min(2, len(features_disponiveis))]
+            if 'idade_aparente' in features_disponiveis and 'idade_aparente' not in default_features:
+                default_features.append('idade_aparente')
+
             features_selecionadas = st.multiselect(
                 "Escolha as Variáveis Independentes do Modelo:",
                 options=features_disponiveis,
-                default=[c for c in features_disponiveis if c != col_area_base][:min(2, len(features_disponiveis))]
+                default=default_features
             )
 
             if features_selecionadas and col_valor_total and col_area_base:
@@ -713,7 +717,6 @@ with aba_avm:
                     max_am = df_modelo_teste[feat].max() if not df_modelo_teste[feat].empty else 0.0
                     limites_amostra_dict[feat] = f"[{min_am:.2f} a {max_am:.2f}]"
                     
-                    # Mecanismo inteligente de busca de correspondência parcial para preencher os inputs automaticamente
                     val_sugerido = 0.0
                     feat_limpa = feat.lower().strip()
                     for chave_ocr, val_ocr in dados_ia.items():
