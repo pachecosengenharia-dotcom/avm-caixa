@@ -155,7 +155,7 @@ if teste_expirado:
     st.stop()
 
 # =====================================================================
-# PROCESSAMENTO DE LEITURA OCR / CERTIDÕES RIGOROSO (CORRIGIDO)
+# PROCESSAMENTO DE LEITURA OCR / CERTIDÕES (COM CAPTURA DE CONDOMÍNIO)
 # =====================================================================
 def converter_extenso_para_numero(texto):
     mapa = {'um': 1, 'dois': 2, 'três': 3, 'quatro': 4, 'cinco': 5, 'seis': 6, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5}
@@ -218,7 +218,7 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
                 telefone_extraido = t_busca_match.group(0).strip()
                 break
 
-    # 4. Endereço Completo Integrado com Município e Bairro
+    # 4. Endereço Completo + Identificação Automática do Nome do Condomínio
     end_completo = "Rua São Clemente, Quadra 334, Lote 17, Condomínio Residencial, Jardim Buriti Sereno, Goiânia - GO"
     end_match = re.search(r'(?:Endereço(?:\s+do\s+Imóvel)?|Imóvel situado|Localização)[:\s]+([^\n\r]+(?:\n[^\n\r]+){0,3})', texto_total, re.IGNORECASE)
     if end_match:
@@ -226,9 +226,13 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
         if len(end_extraido_bruto) > 10:
             end_completo = end_extraido_bruto
 
-    # Garante a presença do Município (ex: Goiânia - GO) se ausente no bloco extraído
-    if "goiânia" not in end_completo.lower() and "go" not in end_completo.lower():
-        end_completo += ", Goiânia - GO"
+    # Procura explicitamente pelo nome do condomínio no texto caso ele conste separado na OS/Matrícula
+    condo_match = re.search(r'(?:Condom[íi]nio|Loteamento|Residencial)[:\s]+([A-Z\u00C0-\u00DD0-9\s]{3,40})', texto_total, re.IGNORECASE)
+    if condo_match:
+        nome_condominio = condo_match.group(1).strip()
+        # Se o condomínio identificado não estiver presente no endereço extraído, insere-o
+        if nome_condominio.lower() not in end_completo.lower():
+            end_completo = end_completo.replace("Condomínio Residencial", f"Condomínio {nome_condominio}")
 
     tipologia_detectada = "Casa"
     t_lower = texto_total.lower()
@@ -248,7 +252,7 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     match_ap = re.search(r'(?:[áa]rea\s+(?:privativa\s+coberta|privativa|constru[íi]da))[:\s]*([0-9\.,]+)', texto_total, re.IGNORECASE)
     variaveis_encontradas['area_privativa'] = converter_valor_num(match_ap, 82.33)
 
-    # Área do Terreno / Fração Ideal / Lote (Busca robusta expandida)
+    # Área do Terreno / Fração Ideal / Lote
     match_at = re.search(r'(?:[áa]rea\s+(?:do\s+terreno|total\s+do\s+terreno|do\s+lote|fra[çc][ãa]o\s+ideal|terreno\s+fração|quota[- ]parte))[:\s]*([0-9\.,]+)', texto_total, re.IGNORECASE)
     if not match_at:
         match_at = re.search(r'fra[çc][ãa]o\s+ideal[^0-9]*([0-9\.,]+)', texto_total, re.IGNORECASE)
@@ -257,47 +261,51 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     if not match_at:
         match_at = re.search(r'á[ée]rea\s+total[^0-9]*([0-9\.,]+)', texto_total, re.IGNORECASE)
     variaveis_encontradas['area_terreno'] = converter_valor_num(match_at, 197.25)
+    variaveis_encontradas['area_do_terreno'] = variaveis_encontradas['area_terreno']
 
-    # Quartos / Dormitórios / Cômodos (Busca expandida)
+    # Quartos / Dormitórios
     match_qt = re.search(r'([0-9]+|\b(?:um|dois|três|quatro|cinco)\b)\s*(?:quartos|dormit[óo]rios|c[ôo]modos)', texto_total, re.IGNORECASE)
     if match_qt:
         val_txt = match_qt.group(1)
-        variaveis_encontradas['quartos'] = int(val_txt) if val_txt.isdigit() else (converter_extenso_para_numero(val_txt) or 2)
+        val_q = int(val_txt) if val_txt.isdigit() else (converter_extenso_para_numero(val_txt) or 2)
     else:
         match_qt_rev = re.search(r'(?:quartos|dormit[óo]rios)[:\s]*([0-9]+|\b(?:um|dois|três|quatro)\b)', texto_total, re.IGNORECASE)
         if match_qt_rev:
             val_txt = match_qt_rev.group(1)
-            variaveis_encontradas['quartos'] = int(val_txt) if val_txt.isdigit() else (converter_extenso_para_numero(val_txt) or 2)
+            val_q = int(val_txt) if val_txt.isdigit() else (converter_extenso_para_numero(val_txt) or 2)
         else:
-            variaveis_encontradas['quartos'] = 2
+            val_q = 2
+    variaveis_encontradas['quartos'] = float(val_q)
 
     # Suítes
     match_st = re.search(r'([0-9]+|\b(?:um|dois|três|quatro)\b)\s*su[íi]tes', texto_total, re.IGNORECASE)
     if match_st:
         val_txt = match_st.group(1)
-        variaveis_encontradas['suite'] = int(val_txt) if val_txt.isdigit() else (converter_extenso_para_numero(val_txt) or 1)
+        variaveis_encontradas['suite'] = float(int(val_txt) if val_txt.isdigit() else (converter_extenso_para_numero(val_txt) or 1))
     else:
-        variaveis_encontradas['suite'] = 1
+        variaveis_encontradas['suite'] = 1.0
 
     # Banheiros
     match_banh = re.search(r'([0-9]+|\b(?:um|dois|três|quatro)\b)\s*banheiros?', texto_total, re.IGNORECASE)
     if match_banh:
         val_txt = match_banh.group(1)
-        variaveis_encontradas['banheiros'] = int(val_txt) if val_txt.isdigit() else (converter_extenso_para_numero(val_txt) or 2)
+        variaveis_encontradas['banheiros'] = float(int(val_txt) if val_txt.isdigit() else (converter_extenso_para_numero(val_txt) or 2))
     else:
-        variaveis_encontradas['banheiros'] = 2
+        variaveis_encontradas['banheiros'] = 2.0
 
-    # Idade Aparente / Ano de Construção / Vida Útil
+    # Idade Aparente / Ano de Construção
     match_idade = re.search(r'(?:idade\s+aparente|idade\s+do\s+im[óo]vel|ano\s+de\s+constru[çc][ãa]o|vida\s+[úu]til)[:\s]*([0-9]+)', texto_total, re.IGNORECASE)
     if match_idade:
-        variaveis_encontradas['idade_aparente'] = float(match_idade.group(1))
+        val_idade = float(match_idade.group(1))
     else:
         match_ano = re.search(r'(?:constru[çc][ãa]o|habite-se)[:\s]*(?:em\s*)?([12][0-9]{3})', texto_total, re.IGNORECASE)
         if match_ano:
             ano_const = int(match_ano.group(1))
-            variaveis_encontradas['idade_aparente'] = float(2026 - ano_const)
+            val_idade = float(2026 - ano_const)
         else:
-            variaveis_encontradas['idade_aparente'] = 5.0
+            val_idade = 5.0
+    variaveis_encontradas['idade_aparente'] = val_idade
+    variaveis_encontradas['idade'] = val_idade
 
     logs_execucao.append(f"Leitura concluída com sucesso: OS = {os_extraida}")
     return variaveis_encontradas, os_extraida, end_completo, informante_extraido, telefone_extraido, tipologia_detectada, logs_execucao
@@ -703,7 +711,14 @@ with aba_avm:
                     max_am = df_modelo_teste[feat].max() if not df_modelo_teste[feat].empty else 0.0
                     limites_amostra_dict[feat] = f"[{min_am:.2f} a {max_am:.2f}]"
                     
-                    val_ini = st.session_state.valores_manuais.get(feat, dados_ia.get(feat, 0.0))
+                    val_sugerido = 0.0
+                    feat_limpa = feat.lower().strip()
+                    for chave_ocr, val_ocr in dados_ia.items():
+                        if chave_ocr.lower() in feat_limpa or feat_limpa in chave_ocr.lower():
+                            val_sugerido = float(val_ocr)
+                            break
+                    
+                    val_ini = st.session_state.valores_manuais.get(feat, val_sugerido if val_sugerido != 0.0 else dados_ia.get(feat, 0.0))
                     
                     col_r1, col_r2, col_r3, col_r4, col_r5, col_r6 = st.columns([1.2, 1, 1.8, 1.2, 0.8, 1.2])
                     with col_r1:
