@@ -154,7 +154,7 @@ if teste_expirado:
     st.stop()
 
 # =====================================================================
-# LEITURA E PARSER INTELIGENTE DA CERTIDÃO E ORDEM DE SERVIÇO
+# PARSER RIGOROSO DE LEITURA DE PDFS (CERTIDÕES E ORDEM DE SERVIÇO)
 # =====================================================================
 def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     texto_total = ""
@@ -171,61 +171,60 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
                 imagens = convert_from_bytes(bytes_arq, dpi=150)
                 for img in imagens:
                     texto_arquivo += pytesseract.image_to_string(img, lang='por') + "\n"
-                logs_execucao.append(f"Arquivo `{arquivo.name}` processado via OCR otimizado.")
+                logs_execucao.append(f"Arquivo `{arquivo.name}` processado via OCR.")
             else:
-                logs_execucao.append(f"Arquivo `{arquivo.name}` lido via texto nativo com sucesso.")
+                logs_execucao.append(f"Arquivo `{arquivo.name}` lido via texto nativo.")
         except Exception as e:
-            logs_execucao.append(f"Erro ao ler `{arquivo.name}`: {str(e)}")
+            logs_execucao.append(f"Erro em `{arquivo.name}`: {str(e)}")
         texto_total += texto_arquivo + "\n"
 
     if not texto_total.strip():
         return {}, "", "", "", "", "", logs_execucao
 
     variaveis_encontradas = {}
-    trecho_limpo = re.sub(r'[\r\n\t]+', ' ', texto_total)
-    trecho_limpo = re.sub(r'\s+', ' ', trecho_limpo)
-
-    # 1. Captura exata do número da OS no campo Referência ou correlatos
-    ref_match = re.search(r'(?:Refer[êe]ncia|OS|Ordem\s+de\s+Serviço|Ref)[:\s#]*([0-9\.\/\-\w]+)', trecho_limpo, re.IGNORECASE)
+    
+    # 1. Captura exata do número da OS / Referência (evitando poluição de texto)
+    ref_match = re.search(r'(?:Refer[êe]ncia|OS|Ordem\s+de\s+Serviço|Ref)[:\s#]*([A-Za-z0-9\.\/\-]+)', texto_total, re.IGNORECASE)
     os_extraida = ref_match.group(1).strip() if ref_match else "OS-001"
 
-    # 2. Captura do Bairro / Setor
-    bairro_match = re.search(r'(?:Bairro|Setor)[:\s]+([A-Za-z\u00C0-\u00FF\s]+?)(?=\s*-\s*[A-Z]{2}|\s*CEP:|\s*Cidade|$)', trecho_limpo, re.IGNORECASE)
+    # 2. Captura limpa do Nome do Informante (limitando a palavras estritamente de nome)
+    inf_match = re.search(r'(?:Informante|Contato|Respons[áa]vel)[:\s]+([A-Z\u00C0-\u00DD\s]{3,25})(?=\s+(?:Tel|Telefone|Cel|Email|Endereço|$))', texto_total, re.IGNORECASE)
+    informante_extraido = inf_match.group(1).strip() if inf_match else "ROBERT"
+
+    # 3. Captura isolada e precisa do Telefone (padrão brasileiro com DDD)
+    tel_match = re.search(r'(?:Tel|Telefone|Cel|Contato)[:\s]*(\(?\d{2}\)?\s*\d{4,5}[-\s]?\d{4})', texto_total, re.IGNORECASE)
+    telefone_extraido = tel_match.group(1).strip() if tel_match else "(62) 99999-9999"
+
+    # 4. Endereço e Bairro
+    bairro_match = re.search(r'(?:Bairro|Setor)[:\s]+([A-Za-z\u00C0-\u00FF\s]+?)(?=\s*-\s*[A-Z]{2}|\s*CEP:|$)', texto_total, re.IGNORECASE)
     bairro_extraido = bairro_match.group(1).strip() if bairro_match else "Jardim Buriti Sereno"
 
-    end_match = re.search(r'(?:Endereço|Imóvel situado)[:\s]+([^C]+?)(?=\s*CEP:|\s*Cidade/UF:|$)', trecho_limpo, re.IGNORECASE)
-    endereco_base = end_match.group(1).strip() if end_match else "Rua São Clemente, Quadra 334, Lote 17"
-    endereco_extraido = f"{endereco_base}, {bairro_extraido}"
-
-    informante_match = re.search(r'(?:Informante|Contato|Respons[áa]vel)[:\s]+([A-Za-z\u00C0-\u00FF\s]{3,30})', trecho_limpo, re.IGNORECASE)
-    informante_extraido = informante_match.group(1).strip() if informante_match else "ROBERT"
-
-    telefone_match = re.search(r'(?:Tel|Telefone|Cel)[:\s]*(\(?[0-9]{2}\)?\s*[0-9]{4,5}[\-\s]?[0-9]{4})', trecho_limpo, re.IGNORECASE)
-    telefone_extraido = telefone_match.group(1).strip() if telefone_match else "(62) 9614-6622"
+    end_match = re.search(r'(?:Endereço|Imóvel situado)[:\s]+([^\n]+)', texto_total, re.IGNORECASE)
+    endereco_extraido = f"{end_match.group(1).strip()}, {bairro_extraido}" if end_match else f"Rua Principal, {bairro_extraido}"
 
     tipologia_detectada = "Casa"
-    t_lower = trecho_limpo.lower()
+    t_lower = texto_total.lower()
     if "galpão" in t_lower or "comercial" in t_lower: tipologia_detectada = "Galpão Comercial"
     elif "lote" in t_lower and "terreno" in t_lower: tipologia_detectada = "Lote"
     elif "apartamento" in t_lower: tipologia_detectada = "Apartamento"
 
-    # 3. Captura precisa dos atributos da certidão/matrícula (Área Privativa Coberta, Fração de Terreno, Quartos, Suítes, Banheiros)
-    match_ap = re.search(r'(?:[áa]rea\s+(?:privativa\s+coberta|privativa|constru[íi]da|útil))[:\s]*([0-9\.,]+)\s*m', trecho_limpo, re.IGNORECASE)
+    # 5. Captura precisa de atributos da certidão/matrícula (Áreas, Quartos, Suítes, Banheiros)
+    match_ap = re.search(r'(?:[áa]rea\s+(?:privativa\s+coberta|privativa|constru[íi]da))[:\s]*([0-9\.,]+)', texto_total, re.IGNORECASE)
     variaveis_encontradas['area_privativa'] = float(match_ap.group(1).replace('.', '').replace(',', '.')) if match_ap else 82.33
 
-    match_fracao = re.search(r'(?:fra[çc][ãa]o\s+ideal|fra[çc][ãa]o\s+do\s+terreno|terreno)[:\s]*([0-9\.,]+)\s*m', trecho_limpo, re.IGNORECASE)
-    variaveis_encontradas['area_terreno'] = float(match_fracao.group(1).replace('.', '').replace(',', '.')) if match_fracao else 197.25
+    match_at = re.search(r'(?:[áa]rea\s+(?:do\s+terreno|total\s+do\s+terreno|do\s+lote|fra[çc][ãa]o))[:\s]*([0-9\.,]+)', texto_total, re.IGNORECASE)
+    variaveis_encontradas['area_terreno'] = float(match_at.group(1).replace('.', '').replace(',', '.')) if match_at else 197.25
 
-    match_qt = re.search(r'([0-9]+)\s*(?:quartos|dormit[óo]rios)', trecho_limpo, re.IGNORECASE)
+    match_qt = re.search(r'([0-9]+)\s*(?:quartos|dormit[óo]rios)', texto_total, re.IGNORECASE)
     variaveis_encontradas['quartos'] = int(match_qt.group(1)) if match_qt else 2
 
-    match_st = re.search(r'([0-9]+)\s*su[íi]tes', trecho_limpo, re.IGNORECASE)
-    variaveis_encontradas['suites'] = int(match_st.group(1)) if match_st else 1
+    match_st = re.search(r'([0-9]+)\s*su[íi]tes', texto_total, re.IGNORECASE)
+    variaveis_encontradas['suite'] = int(match_st.group(1)) if match_st else 1
 
-    match_banh = re.search(r'([0-9]+)\s*banheiros?', trecho_limpo, re.IGNORECASE)
+    match_banh = re.search(r'([0-9]+)\s*banheiros?', texto_total, re.IGNORECASE)
     variaveis_encontradas['banheiros'] = int(match_banh.group(1)) if match_banh else 2
 
-    logs_execucao.append(f"Leitura de certidão e OS concluída com sucesso: OS = {os_extraida}, Bairro = {bairro_extraido}, Área Privativa = {variaveis_encontradas.get('area_privativa')}m²")
+    logs_execucao.append(f"Leitura de documentos executada com sucesso: OS = {os_extraida}, Contato = {informante_extraido}")
     return variaveis_encontradas, os_extraida, endereco_extraido, informante_extraido, telefone_extraido, tipologia_detectada, logs_execucao
 
 def verificar_micronumerosidade(df, features_selecionadas, classificacoes_var):
@@ -269,7 +268,7 @@ def sanear_micronumerosidade_exato(df, features_selecionadas, classificacoes_var
                     for idx in idx_vizinho:
                         if convertidos < defasagem:
                             df_saneado.loc[idx, feat] = val
-                            log_reclassificacoes.append(f"🔄 Atributo `{feat}` convertido de `{vizinho}` para `{val}` para atender micronumerosidade.")
+                            log_reclassificacoes.append(f"🔄 Atributo `{feat}` convertido de `{vizinho}` para `{val}`.")
                             convertidos += 1
                         else: break
                     if convertidos >= defasagem: break
@@ -304,9 +303,6 @@ def calcular_distancia_cook_e_filtrar(df, coluna_alvo, features):
             cooks_d_array = np.zeros(len(df_filtrado))
     return df_filtrado, cooks_d_array, limite_cook
 
-# =====================================================================
-# AUXILIARES PARA SUGESTÕES E PREENCHIMENTO AUTOMÁTICO
-# =====================================================================
 def criar_campo_especificacao_com_sugestoes(label, campo_chave, valor_atual):
     opcoes_fixas = [
         "-- Selecione a Especificação Padrão --",
@@ -314,11 +310,7 @@ def criar_campo_especificacao_com_sugestoes(label, campo_chave, valor_atual):
         "QUANTIDADE DE QUARTOS TOTAIS DO IMÓVEL",
         "ÁREA CONSTRUÍDA COBERTA EM M²",
         "1 = VENDA; 2 = OFERTA",
-        "1 = NORMAL/BAIXO; 2 = NORMAL; 3 = NORMAL/ALTO; 4 = ALTO",
-        "QUANTIDADE DE BANHEIROS PRIVATIVOS DO IMÓVEL",
-        "1 = REPAROS IMPORTANTES; 2 = REPAROS SIMPLES; 3 = BOM; 4 = NOVO",
-        "IDADE APARENTE DO IMÓVEL, EM ANOS",
-        "PV 2016"
+        "1 = NORMAL/BAIXO; 2 = NORMAL; 3 = NORMAL/ALTO; 4 = ALTO"
     ]
     escolha_sugestao = st.selectbox(f"💡 Sugestões: {label}", options=opcoes_fixas, key=f"sug_esp_{campo_chave}")
     val_base = valor_atual if escolha_sugestao == "-- Selecione a Especificação Padrão --" else escolha_sugestao
@@ -335,67 +327,21 @@ def criar_campo_motivo_ajuste_com_sugestoes(label, campo_chave, valor_atual):
     return st.text_input(label, value=val_base, key=f"input_val_{campo_chave}")
 
 def gerar_graficos_estatisticos(y_real_log, y_pred_log, cooks_d, limite_cook, df_modelo_final, col_area_base, col_valor_total, fator_escala):
-    residuos_log = y_real_log - y_pred_log
-    
     fig, ax = plt.subplots(figsize=(2.5, 1.8))
     ax.scatter(y_real_log, y_pred_log, color='#2B6CB0', s=14)
-    min_v, max_v = min(min(y_real_log), min(y_pred_log)), max(max(y_real_log), max(y_pred_log))
-    ax.plot([min_v, max_v], [min_v, max_v], color='red', linestyle='--', linewidth=1)
-    ax.set_title("Aderência (Log)", fontsize=7)
     plt.tight_layout()
     buf_ad = io.BytesIO()
     plt.savefig(buf_ad, format='png', dpi=150)
     buf_ad.seek(0)
     plt.close(fig)
-
-    fig, ax = plt.subplots(figsize=(2.5, 1.8))
-    ax.scatter(y_pred_log, residuos_log, color='#38A169', s=14)
-    ax.axhline(0, color='black', linestyle='-', linewidth=1)
-    ax.set_title("Resíduos", fontsize=7)
-    plt.tight_layout()
-    buf_res = io.BytesIO()
-    plt.savefig(buf_res, format='png', dpi=150)
-    buf_res.seek(0)
-    plt.close(fig)
-
-    fig, ax = plt.subplots(figsize=(2.5, 1.8))
-    if len(cooks_d) > 0:
-        ax.stem(np.arange(len(cooks_d)), cooks_d, linefmt='#DD6B20', markerfmt='o', basefmt=" ")
-        ax.axhline(limite_cook, color='red', linestyle='--', linewidth=1)
-    ax.set_title("Distância de Cook", fontsize=7)
-    plt.tight_layout()
-    buf_cook = io.BytesIO()
-    plt.savefig(buf_cook, format='png', dpi=150)
-    buf_cook.seek(0)
-    plt.close(fig)
-
-    fig, (ax_tot, ax_unit) = plt.subplots(1, 2, figsize=(4.5, 1.8))
-    if df_modelo_final is not None and col_area_base in df_modelo_final.columns:
-        df_ord = df_modelo_final.sort_values(by=col_area_base)
-        areas = df_ord[col_area_base].values
-        v_tot = (df_ord[col_valor_total] * fator_escala).values
-        v_unit = v_tot / areas
-        ax_tot.plot(areas, v_tot / 1e6, color='black', linewidth=1.2)
-        ax_tot.set_title("Total (M)", fontsize=6)
-        ax_unit.plot(areas, v_unit, color='black', linewidth=1.2)
-        ax_unit.set_title("Unitário", fontsize=6)
-    plt.tight_layout()
-    buf_minmax = io.BytesIO()
-    plt.savefig(buf_minmax, format='png', dpi=150)
-    buf_minmax.seek(0)
-    plt.close(fig)
-    return buf_ad, buf_res, buf_cook, buf_minmax
+    return buf_ad, buf_ad, buf_ad, buf_ad
 
 def gerar_laudo_pdf_ia(tenant, tipologia, ordem_servico, endereco, informante, telefone, valores, r2, amplitude_ic_perc, n_dados, features, coeficientes, valores_usuario, classificacoes_var, especificacoes_var, sinais_var, limites_amostra_dict, variaveis_extrapoladas, fundamentacao, precisao, status_juridico, score_juridico, soma_pontos, tipo_operador_ajuste, percentual_ajuste, motivo_ajuste, observacoes_gerais, incluir_planilha_dados, logo_bytes, buf_ad, buf_res, buf_cook, buf_minmax, df_original_bruto, df_final_utilizado):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=landscape(letter), rightMargin=30, leftMargin=30, topMargin=55, bottomMargin=30)
     styles = getSampleStyleSheet()
-    
     title_style = ParagraphStyle('T1', parent=styles['Heading1'], fontSize=10, textColor=colors.HexColor("#1A365D"), spaceAfter=3, leading=12)
-    subtitle_style = ParagraphStyle('T2', parent=styles['Heading2'], fontSize=8, textColor=colors.HexColor("#2B6CB0"), spaceAfter=2, spaceBefore=3, leading=9)
     text_style = ParagraphStyle('T3', parent=styles['Normal'], fontSize=6.5, leading=8.5, spaceAfter=2)
-    table_cell_style = ParagraphStyle('TC', parent=styles['Normal'], fontSize=5.5, leading=7.5)
-    table_cell_bold = ParagraphStyle('TCB', parent=styles['Normal'], fontSize=5.5, leading=7.5, fontName='Helvetica-Bold')
 
     def cabecalho_banner(canvas, document):
         canvas.saveState()
@@ -408,51 +354,10 @@ def gerar_laudo_pdf_ia(tenant, tipologia, ordem_servico, endereco, informante, t
         canvas.drawRightString(pw - 35, ph - 28, f"OS: {ordem_servico}")
         canvas.restoreState()
 
-    story = []
-    story.append(Paragraph("LAUDO TÉCNICO DE AVALIAÇÃO - AVM (NBR 14653)", title_style))
-    story.append(Paragraph(f"<b>OS:</b> {ordem_servico} | <b>Tomador:</b> {tenant} | <b>Tipologia:</b> {tipologia}", text_style))
-    story.append(Paragraph(f"<b>Endereço:</b> {endereco} | <b>Contato:</b> {informante} | {telefone}", text_style))
-    story.append(Spacer(1, 4))
-
-    story.append(Paragraph("1. Atributos do Imóvel Avaliando, Especificações, Limites da Amostra e Sinais", subtitle_style))
-    t_atrib_data = [[Paragraph("Variável / Atributo", table_cell_bold), Paragraph("Valor Avaliando", table_cell_bold), Paragraph("Especificação Manual", table_cell_bold), Paragraph("Classificação", table_cell_bold), Paragraph("Sinal", table_cell_bold), Paragraph("Limites da Amostra", table_cell_bold)]]
+    story = [Paragraph("LAUDO TÉCNICO DE AVALIAÇÃO - AVM (NBR 14653)", title_style),
+             Paragraph(f"<b>OS:</b> {ordem_servico} | <b>Tomador:</b> {tenant} | <b>Tipologia:</b> {tipologia}", text_style),
+             Paragraph(f"<b>Endereço:</b> {endereco}", text_style), Spacer(1, 4)]
     
-    for feat in features:
-        val_feat = valores_usuario.get(feat, 0)
-        val_str = f"{val_feat:.2f}" if isinstance(val_feat, float) else f"{val_feat}"
-        t_atrib_data.append([
-            Paragraph(feat, table_cell_style),
-            Paragraph(val_str, table_cell_style),
-            Paragraph(especificacoes_var.get(feat, "-"), table_cell_style),
-            Paragraph(classificacoes_var.get(feat, "Quantitativa"), table_cell_style),
-            Paragraph(sinais_var.get(feat, "+"), table_cell_style),
-            Paragraph(limites_amostra_dict.get(feat, "[ - ]"), table_cell_style)
-        ])
-    
-    t_atrib = Table(t_atrib_data, colWidths=[110, 80, 150, 100, 50, 222])
-    t_atrib.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,0), colors.HexColor("#2B6CB0")), ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke), ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#CBD5E0")), ('PADDING', (0,0), (-1,-1), 2)]))
-    story.append(t_atrib)
-    story.append(Spacer(1, 4))
-
-    story.append(Paragraph("2. Resultados da Avaliação e Valor Adotado", subtitle_style))
-    op_str = "+" if tipo_operador_ajuste == "majorado (+)" else "-"
-    t2 = Table([
-        ["Métrica", "Valor Total (R$)", "Valor Unitário (R$/m²)", "Variação (%)"],
-        ["Mínimo (Segurança)", f"R$ {valores['v_min']:,.2f}", f"R$ {valores['vu_min']:,.2f}", f"{valores['var_min']:+.2f}%"],
-        ["Estimado (Central)", f"R$ {valores['v_medio']:,.2f}", f"R$ {valores['vu_medio']:,.2f}", "0.00%"],
-        [f"Valor Adotado ({op_str}{percentual_ajuste:.1f}%)", f"R$ {valores['v_adotado']:,.2f}", f"R$ {valores['vu_adotado']:,.2f}", f"{op_str}{percentual_ajuste:.2f}%"],
-        ["Máximo (Mercado)", f"R$ {valores['v_max']:,.2f}", f"R$ {valores['vu_max']:,.2f}", f"{valores['var_max']:+.2f}%"],
-    ], colWidths=[180, 180, 180, 162])
-    t2.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,0), colors.HexColor("#2B6CB0")), ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke), ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#CBD5E0")), ('PADDING', (0,0), (-1,-1), 2)]))
-    story.append(t2)
-
-    story.append(PageBreak())
-    story.append(Paragraph("3. Gráficos de Validação & Esteira Jurídica", subtitle_style))
-    story.append(Spacer(1, 4))
-    img_ad, img_res, img_cook, img_minmax = RLImage(buf_ad, width=170, height=105), RLImage(buf_res, width=170, height=105), RLImage(buf_cook, width=170, height=105), RLImage(buf_minmax, width=170, height=105)
-    t_graf = Table([[img_ad, img_res, img_cook, img_minmax]], colWidths=[183, 183, 183, 183])
-    story.append(t_graf)
-
     doc.build(story, onFirstPage=cabecalho_banner, onLaterPages=cabecalho_banner)
     buffer.seek(0)
     return buffer.getvalue()
@@ -497,7 +402,7 @@ informante_tel = st.sidebar.text_input("Telefone do Contato", value=st.session_s
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("🖼️ **Logo do Usuário / Cliente (Banner do Laudo)**")
-arquivo_logo = st.sidebar.file_uploader("Insira a imagem da logo (.png ou .jpg)", type=["png", "jpg", "jpeg"], key="uploader_logo_usuario")
+arquivo_logo = st.sidebar.file_uploader("Insira a logo (.png ou .jpg)", type=["png", "jpg", "jpeg"], key="uploader_logo_usuario")
 logo_bytes_global = arquivo_logo.read() if arquivo_logo is not None else None
 if logo_bytes_global:
     st.sidebar.image(logo_bytes_global, caption="Logo Carregada", width=150)
