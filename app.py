@@ -207,19 +207,21 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
         if termo in informante_extraido:
             informante_extraido = informante_extraido.split(termo)[0].strip()
 
-    tel_match = re.search(r'(?:Telefone\s+do\s+Contato|Tel(?:efone)?\s*(?:do\s+Contato)?|Cel(?:ular)?|Contato)[^\d]*(\(?\d{2}\)?\s*\d{4,5}[-\s]?\d{4})', texto_total, re.IGNORECASE)
+    # Extração aprimorada de Telefone (captura exata de números com DDD)
+    tel_match = re.search(r'(?:Telefone(?:\s+do\s+Contato)?|Tel(?:efone)?\s*(?:do\s+Contato)?|Cel(?:ular)?|Contato)[:\s]*(\(?\d{2}\)?\s*\d{4,5}[-\s]?\d{4})', texto_total, re.IGNORECASE)
     if tel_match:
         telefone_extraido = tel_match.group(1).strip()
     else:
         tel_gen = re.search(r'\(?\d{2}\)?\s*\d{4,5}[-\s]?\d{4}', texto_total)
         telefone_extraido = tel_gen.group(0).strip() if tel_gen else "(62) 3086-6956"
 
+    # Extração aprimorada de Endereço Completo
     end_match = re.search(r'(?:Endereço(?:\s+do\s+Imóvel)?|Imóvel situado)[:\s]+([^\n\r]+)', texto_total, re.IGNORECASE)
     if end_match:
         endereco_extraido = end_match.group(1).strip()
     else:
-        rua_match = re.search(r'((?:Rua|Av\.|Avenida|Alameda|Praça|Quadra|Lote)[^\n\r,]+(?:,\s*[^\n\r,]+){1,5})', texto_total, re.IGNORECASE)
-        endereco_extraido = rua_match.group(1).strip() if rua_match else "Rua São Clemente, Quadra 334, Lote 17, Jardim Buriti Sereno"
+        rua_match = re.search(r'((?:Rua|Av\.|Avenida|Alameda|Praça|Quadra|Lote)[^\n\r\.\,]+(?:,\s*[^\n\r\.\,]+){1,5})', texto_total, re.IGNORECASE)
+        endereco_extraido = rua_match.group(1).strip() if rua_match else "Rua São Clemente, Quadra 334, Lote 17, Jardim Buriti Sereno, Goiânia - GO"
 
     tipologia_detectada = "Casa"
     t_lower = texto_total.lower()
@@ -341,29 +343,6 @@ def calcular_distancia_cook_e_filtrar(df, coluna_alvo, features):
             cooks_d_array = np.zeros(len(df_filtrado))
     return df_filtrado, cooks_d_array, limite_cook
 
-def criar_campo_especificacao_com_sugestoes(label, campo_chave, valor_atual):
-    opcoes_fixas = [
-        "-- Selecione a Especificação Padrão --",
-        "ÁREA DO LOTE EM M²",
-        "QUANTIDADE DE QUARTOS TOTAIS DO IMÓVEL",
-        "ÁREA CONSTRUÍDA COBERTA EM M²",
-        "1 = VENDA; 2 = OFERTA",
-        "1 = NORMAL/BAIXO; 2 = NORMAL; 3 = NORMAL/ALTO; 4 = ALTO"
-    ]
-    escolha_sugestao = st.selectbox(f"💡 Sugestões: {label}", options=opcoes_fixas, key=f"sug_esp_{campo_chave}")
-    val_base = valor_atual if escolha_sugestao == "-- Selecione a Especificação Padrão --" else escolha_sugestao
-    return st.text_input(label, value=val_base, key=f"input_val_{campo_chave}", label_visibility="collapsed")
-
-def criar_campo_motivo_ajuste_com_sugestoes(label, campo_chave, valor_atual):
-    opcoes_fixas = [
-        "-- Selecione uma Justificativa Padrão --",
-        "MAJORADO EM FUNÇÃO DO IMÓVEL POSSUIR GERAÇÃO PRÓPRIA DE ENERGIA.",
-        "DEPRECIADO EM FUNÇÃO DO IMÓVEL POSSUIR ÁREA CONSTRUÍDA NÃO AVERBADA"
-    ]
-    escolha_sugestao = st.selectbox(f"💡 Sugestões: {label}", options=opcoes_fixas, key=f"sug_motivo_{campo_chave}")
-    val_base = valor_atual if escolha_sugestao == "-- Selecione uma Justificativa Padrão --" else escolha_sugestao
-    return st.text_input(label, value=val_base, key=f"input_val_{campo_chave}")
-
 def gerar_graficos_estatisticos(y_real_log, y_pred_log, cooks_d, limite_cook, df_modelo_final, col_area_base, col_valor_total, fator_escala):
     fig, ax = plt.subplots(figsize=(2.5, 1.8))
     ax.scatter(y_real_log, y_pred_log, color='#2B6CB0', s=14)
@@ -408,7 +387,7 @@ st.markdown("Gerenciamento integrado de bases municipais, dados institucionais e
 st.divider()
 
 if 'os_auto' not in st.session_state: st.session_state.os_auto = "7375.3596.000805648/2026.01.01"
-if 'endereco_auto' not in st.session_state: st.session_state.endereco_auto = "Rua São Clemente, Quadra 334, Lote 17, Jardim Buriti Sereno"
+if 'endereco_auto' not in st.session_state: st.session_state.endereco_auto = "Rua São Clemente, Quadra 334, Lote 17, Jardim Buriti Sereno, Goiânia - GO"
 if 'informante_auto' not in st.session_state: st.session_state.informante_auto = "ROBERT"
 if 'telefone_auto' not in st.session_state: st.session_state.telefone_auto = "(62) 3086-6956"
 if 'tipologia_auto' not in st.session_state: st.session_state.tipologia_auto = "Casa"
@@ -554,7 +533,6 @@ with aba_repositorio:
     df_repositorio = pd.read_sql_query(query_filtro, conn_rep, params=params)
 
     if not df_repositorio.empty:
-        # Tratamento seguro para contagem do tamanho de cada JSON salvo
         def calcular_qtd_dados(val):
             try:
                 if isinstance(val, str):
@@ -582,7 +560,8 @@ with aba_repositorio:
             if res_json and res_json[0]:
                 df_carregado = pd.read_json(io.StringIO(res_json[0]), orient='records')
                 st.session_state.df_dinamico = df_carregado
-                st.success(f"✅ Base carregada com sucesso contendo `{len(df_carregado)}` registros para o Motor AVM na Aba 2!")
+                st.success(f"✅ Base carregada com sucesso contendo `{len(df_carregado)}` registros para o Motor AVM!")
+                st.rerun()
     else:
         st.info("ℹ️ Nenhuma base cadastrada com este filtro.")
     conn_rep.close()
@@ -605,9 +584,13 @@ with aba_avm:
                     st.info("📋 **Auditoria Documental:**")
                     for log in logs: st.write(log)
                     if os_ex: st.session_state.os_auto = os_ex
-                    if end_ex: st.session_state.endereco_auto = end_ex
+                    if end_ex: 
+                        st.session_state.endereco_auto = end_ex
+                        endereco_imovel_input = end_ex
                     if inf_ex: st.session_state.informante_auto = inf_ex
-                    if tel_ex: st.session_state.telefone_auto = tel_ex
+                    if tel_ex: 
+                        st.session_state.telefone_auto = tel_ex
+                        informante_tel = tel_ex
                     for k, v in d_ext.items(): st.session_state.valores_manuais[k] = v
                     st.success("✨ Dados preenchidos automaticamente!")
                     st.rerun()
@@ -669,7 +652,7 @@ with aba_avm:
                 col_h1, col_h2, col_h3, col_h4, col_h5, col_h6 = st.columns([1.2, 1, 1.8, 1.2, 0.8, 1.2])
                 col_h1.markdown("**Variável**")
                 col_h2.markdown("**Valor Avaliando**")
-                col_h3.markdown("**Especificação (Histórico)**")
+                col_h3.markdown("**Especificação do Imóvel (Nomeada)**")
                 col_h4.markdown("**Classificação**")
                 col_h5.markdown("**Sinal**")
                 col_h6.markdown("**Limites Amostra**")
@@ -688,9 +671,34 @@ with aba_avm:
                     with col_r2:
                         val_inp = st.number_input(f"Val_{feat}", value=float(val_ini), format="%.2f", key=f"input_safe_{tipologia_imovel}_{feat}", label_visibility="collapsed")
                         valores_usuario[feat] = val_inp
+                        
+                        # Verificação automática de extrapolação (NBR 14653)
+                        if val_inp < min_am or val_inp > max_am:
+                            variaveis_extrapoladas.append(f"{feat} (Valor Avaliando: {val_inp} fora dos limites [{min_am:.2f} - {max_am:.2f}])")
+
                     with col_r3:
-                        esp_atual = st.session_state.especificacoes_variaveis.get(feat, "")
-                        st.session_state.especificacoes_variaveis[feat] = criar_campo_especificacao_com_sugestoes(f"Esp_{feat}", f"esp_{tipologia_imovel}_{feat}", esp_atual)
+                        # Campo Especificação com preenchimento automático integrado via callback/session state
+                        key_sug = f"sug_esp_{tipologia_imovel}_{feat}"
+                        key_txt = f"input_val_{tipologia_imovel}_{feat}"
+                        
+                        opcoes_fixas = [
+                            "-- Selecione a Especificação Padrão --",
+                            "ÁREA DO LOTE EM M²",
+                            "QUANTIDADE DE QUARTOS TOTAIS DO IMÓVEL",
+                            "ÁREA CONSTRUÍDA COBERTA EM M²",
+                            "1 = VENDA; 2 = OFERTA",
+                            "1 = NORMAL/BAIXO; 2 = NORMAL; 3 = NORMAL/ALTO; 4 = ALTO"
+                        ]
+                        
+                        def atualizar_especificacao():
+                            escolhido = st.session_state[key_sug]
+                            if escolhido != "-- Selecione a Especificação Padrão --":
+                                st.session_state[key_txt] = escolhido
+
+                        st.selectbox(f"💡 Sugestão para {feat}", options=opcoes_fixas, key=key_sug, on_change=atualizar_especificacao, label_visibility="collapsed")
+                        st.text_input(f"Especificação {feat}", key=key_txt, placeholder="Digite ou selecione acima", label_visibility="collapsed")
+                        st.session_state.especificacoes_variaveis[feat] = st.session_state.get(key_txt, "")
+
                     with col_r4:
                         class_atual = st.session_state.classificacoes_variaveis.get(feat, "Quantitativa")
                         st.session_state.classificacoes_variaveis[feat] = st.selectbox(f"Class_{feat}", options=tipos_classificacao_opcoes, index=0, key=f"class_{tipologia_imovel}_{feat}", label_visibility="collapsed")
@@ -700,6 +708,14 @@ with aba_avm:
                     with col_r6:
                         st.markdown(f"`{limites_amostra_dict[feat]}`")
                     st.divider()
+
+                # Exibição clara das extrapolações identificadas na tela
+                if variaveis_extrapoladas:
+                    st.warning("⚠️ **Extrapolações Identificadas (Fora dos Limites da Amostra):**")
+                    for ext in variaveis_extrapoladas:
+                        st.markdown(f"- {ext}")
+                else:
+                    st.success("✅ Nenhuma extrapolação identificada. Todos os atributos do imóvel avaliando estão dentro dos limites da amostra.")
 
                 # =====================================================
                 # MÓDULO DE SANEAMENTO E COOK
@@ -727,7 +743,21 @@ with aba_avm:
                 col_aj1, col_aj2, col_aj3 = st.columns(3)
                 tipo_operador_ajuste = col_aj1.selectbox("Direção do Ajuste:", ["depreciado (-)", "majorado (+)"], index=1)
                 percentual_ajuste = col_aj2.number_input("Percentual de Ajuste (%)", value=0.0, step=0.5)
-                motivo_ajuste_input = criar_campo_motivo_ajuste_com_sugestoes("Justificativa Técnica", "motivo_ajuste_key", "")
+                
+                # Campo Motivo de Ajuste com sugestões integradas
+                key_sug_mot = f"sug_motivo_{tipologia_imovel}"
+                key_txt_mot = f"input_motivo_{tipologia_imovel}"
+                opcoes_motivo = [
+                    "-- Selecione uma Justificativa Padrão --",
+                    "MAJORADO EM FUNÇÃO DO IMÓVEL POSSUIR GERAÇÃO PRÓPRIA DE ENERGIA.",
+                    "DEPRECIADO EM FUNÇÃO DO IMÓVEL POSSUIR ÁREA CONSTRUÍDA NÃO AVERBADA"
+                ]
+                def atualizar_motivo():
+                    esc = st.session_state[key_sug_mot]
+                    if esc != "-- Selecione uma Justificativa Padrão --":
+                        st.session_state[key_txt_mot] = esc
+                st.selectbox("💡 Sugestões de Justificativa Técnica", options=opcoes_motivo, key=key_sug_mot, on_change=atualizar_motivo)
+                motivo_ajuste_input = st.text_input("Justificativa Técnica do Ajuste", key=key_txt_mot, placeholder="Digite ou selecione acima")
 
                 st.markdown("---")
                 if st.button("🚀 Executar Modelo Estatístico e Gerar Laudo PDF NBR"):
