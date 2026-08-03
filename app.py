@@ -155,7 +155,7 @@ if teste_expirado:
     st.stop()
 
 # =====================================================================
-# PROCESSAMENTO DE LEITURA OCR / CERTIDÕES APRIMORADO E ROBUSTO
+# PROCESSAMENTO DE LEITURA OCR / CERTIDÕES CORRIGIDO E BLINDADO
 # =====================================================================
 def converter_extenso_para_numero(texto):
     mapa = {'um': 1, 'dois': 2, 'três': 3, 'quatro': 4, 'cinco': 5, 'seis': 6, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5}
@@ -196,7 +196,7 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
 
     variaveis_encontradas = {}
     
-    # 1. Número da OS ou Referência (Exigindo padrão numérico/pontuado)
+    # 1. OS ou Referência rigorosa (Evitando palavras soltas como 'engenharia')
     ref_match = re.search(r'(?:OS|Ordem\s+de\s+Serviço|Refer[êe]ncia)[:\s#]*([0-9\.\/\-]+)', texto_total, re.IGNORECASE)
     os_extraida = ref_match.group(1).strip() if ref_match else "7375.3596.000805648/2026.01.01"
 
@@ -207,20 +207,21 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
         if termo in informante_extraido:
             informante_extraido = informante_extraido.split(termo)[0].strip()
 
-    # 3. Telefone robusto
-    tel_match = re.search(r'(?:Telefone|Tel|Celular|Cel|Contato)[^\d]*(\(?\d{2}\)?\s*\d{4,5}[-\s]?\d{4})', texto_total, re.IGNORECASE)
+    # 3. Telefone específico do contato (Priorizando tags de contato/responsável)
+    tel_match = re.search(r'(?:Telefone\s+(?:do\s+Contato|do\s+Responsável|do\s+Informante)|Tel(?:efone)?\s*(?:Contato)?|Cel(?:ular)?\s*(?:Contato)?|Contato)[:\s]*(\(?\d{2}\)?\s*\d{4,5}[-\s]?\d{4})', texto_total, re.IGNORECASE)
     if tel_match:
         telefone_extraido = tel_match.group(1).strip()
     else:
+        # Fallback para qualquer telefone com DDD no documento
         tel_gen = re.search(r'\(?\d{2}\)?\s*\d{4,5}[-\s]?\d{4}', texto_total)
         telefone_extraido = tel_gen.group(0).strip() if tel_gen else "(62) 3086-6956"
 
-    # 4. Endereço completo robusto
-    end_match = re.search(r'(?:Endereço(?:\s+do\s+Imóvel)?|Imóvel situado|Localização)[:\s]+([^\n\r]+)', texto_total, re.IGNORECASE)
+    # 4. Endereço Completo Alargado (Capturando linha inteira e complementos)
+    end_match = re.search(r'(?:Endereço(?:\s+do\s+Imóvel)?|Imóvel situado|Localização)[:\s]+([^\n\r]+(?:\n[^\n\r]+)?)', texto_total, re.IGNORECASE)
     if end_match:
-        endereco_extraido = end_match.group(1).strip()
+        endereco_extraido = end_match.group(1).strip().replace('\n', ' ')
     else:
-        rua_match = re.search(r'((?:Rua|Av\.|Avenida|Alameda|Praça|Quadra|Lote)[^\n\r]+(?:,\s*[^\n\r]+){1,3})', texto_total, re.IGNORECASE)
+        rua_match = re.search(r'((?:Rua|Av\.|Avenida|Alameda|Praça|Quadra|Lote)[^\n\r]+(?:,\s*[^\n\r]+){1,4})', texto_total, re.IGNORECASE)
         endereco_extraido = rua_match.group(1).strip() if rua_match else "Rua São Clemente, Quadra 334, Lote 17, Jardim Buriti Sereno, Goiânia - GO"
 
     tipologia_detectada = "Casa"
@@ -237,15 +238,17 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
         except:
             return val_padrao
 
-    # Captura de Área Privativa
+    # Área Privativa
     match_ap = re.search(r'(?:[áa]rea\s+(?:privativa\s+coberta|privativa|constru[íi]da))[:\s]*([0-9\.,]+)', texto_total, re.IGNORECASE)
     variaveis_encontradas['area_privativa'] = converter_valor_num(match_ap, 82.33)
 
-    # Captura de Área do Terreno / Fração Ideal / Lote
-    match_at = re.search(r'(?:[áa]rea\s+(?:do\s+terreno|total\s+do\s+terreno|do\s+lote|fra[çc][ãa]o\s+ideal))[:\s]*([0-9\.,]+)', texto_total, re.IGNORECASE)
+    # Área do Terreno / Fração Ideal / Lote (Abrangendo múltiplos termos da certidão)
+    match_at = re.search(r'(?:[áa]rea\s+(?:do\s+terreno|total\s+do\s+terreno|do\s+lote|fra[çc][ãa]o\s+ideal|terreno\s+fração))[:\s]*([0-9\.,]+)', texto_total, re.IGNORECASE)
+    if not match_at:
+        match_at = re.search(r'fra[çc][ãa]o\s+ideal[^0-9]*([0-9\.,]+)', texto_total, re.IGNORECASE)
     variaveis_encontradas['area_terreno'] = converter_valor_num(match_at, 197.25)
 
-    # Captura de Quartos / Dormitórios
+    # Quartos / Dormitórios
     match_qt = re.search(r'([0-9]+|\b(?:um|dois|três|quatro|cinco)\b)\s*(?:quartos|dormit[óo]rios)', texto_total, re.IGNORECASE)
     if match_qt:
         val_txt = match_qt.group(1)
@@ -253,7 +256,7 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     else:
         variaveis_encontradas['quartos'] = 2
 
-    # Captura de Suítes
+    # Suítes
     match_st = re.search(r'([0-9]+|\b(?:um|dois|três|quatro)\b)\s*su[íi]tes', texto_total, re.IGNORECASE)
     if match_st:
         val_txt = match_st.group(1)
@@ -261,13 +264,20 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     else:
         variaveis_encontradas['suite'] = 1
 
-    # Captura de Banheiros
+    # Banheiros
     match_banh = re.search(r'([0-9]+|\b(?:um|dois|três|quatro)\b)\s*banheiros?', texto_total, re.IGNORECASE)
     if match_banh:
         val_txt = match_banh.group(1)
         variaveis_encontradas['banheiros'] = int(val_txt) if val_txt.isdigit() else (converter_extenso_para_numero(val_txt) or 2)
     else:
         variaveis_encontradas['banheiros'] = 2
+
+    # Idade Aparente / Ano de Construção
+    match_idade = re.search(r'(?:idade\s+aparente|idade\s+do\s+im[óo]vel|ano\s+de\s+constru[çc][ãa]o)[:\s]*([0-9]+)', texto_total, re.IGNORECASE)
+    if match_idade:
+        variaveis_encontradas['idade_aparente'] = float(match_idade.group(1))
+    else:
+        variaveis_encontradas['idade_aparente'] = 5.0  # Padrão
 
     logs_execucao.append(f"Leitura concluída com sucesso: OS = {os_extraida}")
     return variaveis_encontradas, os_extraida, endereco_extraido, informante_extraido, telefone_extraido, tipologia_detectada, logs_execucao
@@ -589,10 +599,18 @@ with aba_avm:
                     d_ext, os_ex, end_ex, inf_ex, tel_ex, tip_ex, logs = processar_multiplos_documentos_com_auditoria(documentos_enviados)
                     st.info("📋 **Auditoria Documental:**")
                     for log in logs: st.write(log)
-                    if os_ex: st.session_state.os_auto = os_ex
-                    if end_ex: st.session_state.endereco_auto = end_ex
-                    if inf_ex: st.session_state.informante_auto = inf_ex
-                    if tel_ex: st.session_state.telefone_auto = tel_ex
+                    if os_ex: 
+                        st.session_state.os_auto = os_ex
+                        ordem_servico_input = os_ex
+                    if end_ex: 
+                        st.session_state.endereco_auto = end_ex
+                        endereco_imovel_input = end_ex
+                    if inf_ex: 
+                        st.session_state.informante_auto = inf_ex
+                        informante_nome = inf_ex
+                    if tel_ex: 
+                        st.session_state.telefone_auto = tel_ex
+                        informante_tel = tel_ex
                     for k, v in d_ext.items(): st.session_state.valores_manuais[k] = v
                     st.success("✨ Dados preenchidos automaticamente!")
                     st.rerun()
