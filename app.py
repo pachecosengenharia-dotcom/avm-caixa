@@ -1,5 +1,6 @@
 import io
 import re
+import json
 import numpy as np
 import pandas as pd
 import pdfplumber
@@ -464,7 +465,7 @@ aba_repositorio, aba_avm, aba_juridico, aba_integracao_banco = st.tabs([
 # =====================================================================
 with aba_repositorio:
     st.subheader("🗄️ Repositório Central de Dados (Data Lake)")
-    st.markdown("Gerencie seu acervo de comparáveis e anexe novas planilhas com identificação automática de todas as variáveis.")
+    st.markdown("Gerenciamento integrado de acervo comparável, planilhas próprias e remessas bancárias.")
 
     db_path = "repositorio_central_avm.db"
     conn_rep = sqlite3.connect(db_path)
@@ -494,17 +495,17 @@ with aba_repositorio:
             df_prop = pd.read_csv(arq_prop, encoding='latin1', sep=None, engine='python', on_bad_lines='skip') if arq_prop.name.endswith('.csv') else pd.read_excel(arq_prop)
             df_prop.columns = [str(c).strip().replace(" ", "_").lower() for c in df_prop.columns]
             
-            st.markdown("#### 📋 Prévia das Variáveis Identificadas Automaticamente (Numéricas e Textuais):")
+            st.markdown("#### 📋 Prévia das Variáveis Identificadas Automaticamente:")
             st.dataframe(df_prop.head(), use_container_width=True)
 
             if st.button("💾 Salvar Planilha Completa no Repositório Central"):
-                json_str = df_prop.to_json(orient='split', index=False)
+                json_str = df_prop.to_json(orient='records', force_ascii=False)
                 conn_rep.execute('''
                     INSERT INTO base_centralizada (municipio, tipologia, origem_dado, dados_json)
                     VALUES (?, ?, ?, ?)
                 ''', (mun_p, tipo_p, origem_p, json_str))
                 conn_rep.commit()
-                st.success("✅ Planilha própria salva e integrada com sucesso no Repositório Central!")
+                st.success("✅ Planilha salva e integrada com sucesso no Repositório Central!")
                 st.rerun()
         except Exception as e:
             st.error(f"❌ Erro ao ler planilha: {str(e)}")
@@ -531,7 +532,7 @@ with aba_repositorio:
             cursor.execute("SELECT dados_json FROM base_centralizada WHERE id = ?", (base_selecionada_id,))
             res_json = cursor.fetchone()
             if res_json and res_json[0]:
-                df_carregado = pd.read_json(res_json[0], orient='split')
+                df_carregado = pd.read_json(io.StringIO(res_json[0]), orient='records')
                 st.session_state.df_dinamico = df_carregado
                 st.success(f"✅ Base ID {base_selecionada_id} carregada com sucesso para o Motor AVM na Aba 2!")
     else:
