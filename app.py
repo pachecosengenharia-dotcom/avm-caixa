@@ -154,76 +154,54 @@ if teste_expirado:
     st.stop()
 
 # =====================================================================
-# AUXILIARES PARA SUGESTÕES E PREENCHIMENTO AUTOMÁTICO
+# FUNÇÕES DE SANEAMENTO (MICRONUMEROSIDADE) E DISTÂNCIA DE COOK
 # =====================================================================
-def criar_campo_especificacao_com_sugestoes(label, campo_chave, valor_atual):
-    opcoes_fixas = [
-        "-- Selecione a Especificação Padrão --",
-        "ÁREA DO LOTE EM M²",
-        "QUANTIDADE DE QUARTOS TOTAIS DO IMÓVEL",
-        "ÁREA CONSTRUÍDA COBERTA EM M²",
-        "1 = VENDA; 2 = OFERTA",
-        "1 = NORMAL/BAIXO; 2 = NORMAL; 3 = NORMAL/ALTO; 4 = ALTO",
-        "QUANTIDADE DE BANHEIROS PRIVATIVOS DO IMÓVEL",
-        "1 = REPAROS IMPORTANTES; 2 = REPAROS SIMPLES; 3 = BOM; 4 = NOVO",
-        "IDADE APARENTE DO IMÓVEL, EM ANOS",
-        "PV 2016"
-    ]
-    escolha_sugestao = st.selectbox(f"💡 Sugestões: {label}", options=opcoes_fixas, key=f"sug_esp_{campo_chave}")
-    val_base = valor_atual if escolha_sugestao == "-- Selecione a Especificação Padrão --" else escolha_sugestao
-    return st.text_input(label, value=val_base, key=f"input_val_{campo_chave}", label_visibility="collapsed")
+def verificar_micronumerosidade(df, features_selecionadas, classificacoes_var):
+    alertas = []
+    n_total = len(df)
+    tipos_saneaveis = ["Dicotômica", "Código Alocado", "Proxy Temporal"]
+    for feat in features_selecionadas:
+        if feat not in df.columns: continue
+        tipo_atual = classificacoes_var.get(feat, "Quantitativa")
+        if tipo_atual not in tipos_saneaveis: continue
+        serie = df[feat]
+        for val in serie.unique():
+            contagem = (serie == val).sum()
+            percentual = (contagem / n_total) * 100 if n_total > 0 else 0
+            if percentual < 10.0:
+                alertas.append(f"⚠️ **{feat}** (Valor `{val}`): {contagem} dados (**{percentual:.1f}%** - Abaixo do limite de 10%).")
+    return alertas
 
-def criar_campo_motivo_ajuste_com_sugestoes(label, campo_chave, valor_atual):
-    opcoes_fixas = [
-        "-- Selecione uma Justificativa Padrão --",
-        "MAJORADO EM FUNÇÃO DO IMÓVEL POSSUIR GERAÇÃO PRÓPRIA DE ENERGIA.",
-        "DEPRECIADO EM FUNÇÃO DO IMÓVEL POSSUIR ÁREA CONSTRUÍDA NÃO AVERBADA"
-    ]
-    escolha_sugestao = st.selectbox(f"💡 Sugestões: {label}", options=opcoes_fixas, key=f"sug_motivo_{campo_chave}")
-    val_base = valor_atual if escolha_sugestao == "-- Selecione uma Justificativa Padrão --" else escolha_sugestao
-    return st.text_input(label, value=val_base, key=f"input_val_{campo_chave}")
-
-def criar_campo_observacoes_com_sugestoes(label, campo_chave, valor_atual):
-    opcoes_fixas = [
-        "-- Selecione uma Observação Padrão --",
-        "MAJORADO EM FUNÇÃO DO IMÓVEL POSSUIR GERAÇÃO PRÓPRIA DE ENERGIA."
-    ]
-    escolha_sugestao = st.selectbox(f"💡 Sugestões: {label}", options=opcoes_fixas, key=f"sug_obs_{campo_chave}")
-    val_base = valor_atual if escolha_sugestao == "-- Selecione uma Observação Padrão --" else escolha_sugestao
-    return st.text_area(label, value=val_base, height=100, key=f"input_val_{campo_chave}")
-
-# =====================================================================
-# CÁLCULOS ESTATÍSTICOS E FILTROS DE COOK
-# =====================================================================
-def calcular_estatisticas_regressao(X, y, coeficientes_reg):
-    n = len(y)
-    k = X.shape[1]
-    X_matrix = np.hstack([np.ones((n, 1)), X])
-    y_pred_ols = X_matrix.dot(coeficientes_reg)
-    residuos = y - y_pred_ols
-    soma_sq_res = np.sum(residuos ** 2)
-    graus_liberdade = n - k - 1
-    if graus_liberdade > 0:
-        var_res = soma_sq_res / graus_liberdade
-        try:
-            cov_mat = var_res * np.linalg.inv(X_matrix.T.dot(X_matrix))
-            desvio_padrao_se = np.sqrt(np.diagonal(cov_mat))
-            t_stats = coeficientes_reg / desvio_padrao_se
-            p_valores_t = [2 * (1 - stats.t.cdf(np.abs(t), df=graus_liberdade)) for t in t_stats]
-        except Exception:
-            p_valores_t = [0.05] * (k + 1)
-    else:
-        p_valores_t = [0.05] * (k + 1)
-        
-    soma_sq_reg = np.sum((y_pred_ols - np.mean(y)) ** 2)
-    soma_sq_tot = np.sum((y - np.mean(y)) ** 2)
-    if soma_sq_tot > 0 and k > 0 and graus_liberdade > 0:
-        r2_calc = soma_sq_reg / soma_sq_tot
-        f_stat = (r2_calc / k) / ((1 - r2_calc) / graus_liberdade) if r2_calc < 1 else 999.99
-        p_valor_f = 1 - stats.f.cdf(f_stat, k, graus_liberdade)
-    else:
-        p_valor_f = 0.001
-    return p_valores_t, p_valor_f
+def sanear_micronumerosidade_exato(df, features_selecionadas, classificacoes_var):
+    df_saneado = df.copy()
+    log_reclassificacoes = []
+    tipos_saneaveis = ["Dicotômica", "Código Alocado", "Proxy Temporal"]
+    for feat in features_selecionadas:
+        if feat not in df_saneado.columns: continue
+        tipo_atual = classificacoes_var.get(feat, "Quantitativa")
+        if tipo_atual not in tipos_saneaveis: continue
+        serie = df_saneado[feat]
+        valores_unicos = sorted(serie.unique())
+        for val in valores_unicos:
+            n_atual = len(df_saneado)
+            if n_atual == 0: break
+            contagem = (serie == val).sum()
+            percentual = (contagem / n_atual) * 100
+            if percentual < 10.0:
+                meta_10 = int(np.ceil(0.10 * n_atual))
+                defasagem = meta_10 - contagem
+                valores_vizinhos = [v for v in valores_unicos if abs(float(v) - float(val)) == 1.0] if all(isinstance(v, (int, float, np.number)) for v in valores_unicos) else [v for v in valores_unicos if v != val]
+                convertidos = 0
+                for vizinho in valores_vizinhos:
+                    idx_vizinho = df_saneado[df_saneado[feat] == vizinho].index
+                    for idx in idx_vizinho:
+                        if convertidos < defasagem:
+                            df_saneado.loc[idx, feat] = val
+                            log_reclassificacoes.append(f"🔄 Atributo `{feat}` convertido de `{vizinho}` para `{val}` para atender micronumerosidade.")
+                            convertidos += 1
+                        else: break
+                    if convertidos >= defasagem: break
+    return df_saneado, log_reclassificacoes
 
 def calcular_distancia_cook_e_filtrar(df, coluna_alvo, features):
     Q1 = df[coluna_alvo].quantile(0.10)
@@ -254,72 +232,35 @@ def calcular_distancia_cook_e_filtrar(df, coluna_alvo, features):
             cooks_d_array = np.zeros(len(df_filtrado))
     return df_filtrado, cooks_d_array, limite_cook
 
-def sanear_micronumerosidade_exato(df, features_selecionadas, classificacoes_var):
-    df_saneado = df.copy()
-    log_reclassificacoes = []
-    tipos_saneaveis = ["Dicotômica", "Código Alocado", "Proxy Temporal"]
-    for feat in features_selecionadas:
-        if feat not in df_saneado.columns: continue
-        tipo_atual = classificacoes_var.get(feat, "Quantitativa")
-        if tipo_atual not in tipos_saneaveis: continue
-        serie = df_saneado[feat]
-        valores_unicos = sorted(serie.unique())
-        for val in valores_unicos:
-            n_atual = len(df_saneado)
-            if n_atual == 0: break
-            contagem = (serie == val).sum()
-            percentual = (contagem / n_atual) * 100
-            if percentual < 10.0:
-                meta_10 = int(np.ceil(0.10 * n_atual))
-                defasagem = meta_10 - contagem
-                valores_vizinhos = [v for v in valores_unicos if abs(float(v) - float(val)) == 1.0] if all(isinstance(v, (int, float, np.number)) for v in valores_unicos) else [v for v in valores_unicos if v != val]
-                convertidos = 0
-                for vizinho in valores_vizinhos:
-                    idx_vizinho = df_saneado[df_saneado[feat] == vizinho].index
-                    for idx in idx_vizinho:
-                        if convertidos < defasagem:
-                            df_saneado.loc[idx, feat] = val
-                            log_reclassificacoes.append(f"🔄 Atributo `{feat}` convertido de `{vizinho}` para `{val}`.")
-                            convertidos += 1
-                        else: break
-                    if convertidos >= defasagem: break
-    return df_saneado, log_reclassificacoes
+# =====================================================================
+# AUXILIARES PARA SUGESTÕES E PREENCHIMENTO AUTOMÁTICO
+# =====================================================================
+def criar_campo_especificacao_com_sugestoes(label, campo_chave, valor_atual):
+    opcoes_fixas = [
+        "-- Selecione a Especificação Padrão --",
+        "ÁREA DO LOTE EM M²",
+        "QUANTIDADE DE QUARTOS TOTAIS DO IMÓVEL",
+        "ÁREA CONSTRUÍDA COBERTA EM M²",
+        "1 = VENDA; 2 = OFERTA",
+        "1 = NORMAL/BAIXO; 2 = NORMAL; 3 = NORMAL/ALTO; 4 = ALTO",
+        "QUANTIDADE DE BANHEIROS PRIVATIVOS DO IMÓVEL",
+        "1 = REPAROS IMPORTANTES; 2 = REPAROS SIMPLES; 3 = BOM; 4 = NOVO",
+        "IDADE APARENTE DO IMÓVEL, EM ANOS",
+        "PV 2016"
+    ]
+    escolha_sugestao = st.selectbox(f"💡 Sugestões: {label}", options=opcoes_fixas, key=f"sug_esp_{campo_chave}")
+    val_base = valor_atual if escolha_sugestao == "-- Selecione a Especificação Padrão --" else escolha_sugestao
+    return st.text_input(label, value=val_base, key=f"input_val_{campo_chave}", label_visibility="collapsed")
 
-def verificar_micronumerosidade(df, features_selecionadas, classificacoes_var):
-    alertas = []
-    n_total = len(df)
-    tipos_saneaveis = ["Dicotômica", "Código Alocado", "Proxy Temporal"]
-    for feat in features_selecionadas:
-        if feat not in df.columns: continue
-        tipo_atual = classificacoes_var.get(feat, "Quantitativa")
-        if tipo_atual not in tipos_saneaveis: continue
-        serie = df[feat]
-        for val in serie.unique():
-            contagem = (serie == val).sum()
-            percentual = (contagem / n_total) * 100 if n_total > 0 else 0
-            if percentual < 10.0:
-                alertas.append(f"⚠️ **{feat}** (Valor `{val}`): {contagem} dados (**{percentual:.1f}%**).")
-    return alertas
-
-def calcular_graus_nbr_rigoroso(n_dados, r2, n_variaveis, p_valores_t, p_valor_f, amplitude_ic_percentual, tem_extrapolacao=False, notas_manuais=None, usar_manual=False):
-    p_item1 = notas_manuais.get('item1', 2) if notas_manuais else 2
-    p_item2 = 3 if n_dados >= 30 else (2 if n_dados >= 12 else 1)
-    p_item3 = notas_manuais.get('item3', 2) if notas_manuais else 2
-    p_item4 = notas_manuais['item4_manual'] if (usar_manual and notas_manuais and 'item4_manual' in notas_manuais) else (1 if tem_extrapolacao else 3)
-    max_p_regressor = max(p_valores_t[1:]) if len(p_valores_t) > 1 else 0.05
-    p_item5 = 3 if max_p_regressor <= 0.10 else (2 if max_p_regressor <= 0.20 else (1 if max_p_regressor <= 0.30 else 0))
-    p_item6 = 3 if p_valor_f <= 0.01 else (2 if p_valor_f <= 0.05 else 1)
-    
-    if usar_manual and notas_manuais:
-        if 'item2_manual' in notas_manuais: p_item2 = notas_manuais['item2_manual']
-        if 'item5_manual' in notas_manuais: p_item5 = notas_manuais['item5_manual']
-        if 'item6_manual' in notas_manuais: p_item6 = notas_manuais['item6_manual']
-
-    pontos_itens = [p_item1, p_item2, p_item3, p_item4, p_item5, p_item6]
-    soma_pontos = sum(pontos_itens)
-    fundamentacao = "Grau III" if soma_pontos >= 16 else ("Grau II" if soma_pontos >= 10 else ("Grau I" if soma_pontos >= 6 else "Inválido"))
-    precisao = "Grau III" if amplitude_ic_percentual <= 30.0 else ("Grau II" if amplitude_ic_percentual <= 40.0 else "Grau I")
-    return fundamentacao, precisao, soma_pontos, pontos_itens, max_p_regressor, p_valor_f
+def criar_campo_motivo_ajuste_com_sugestoes(label, campo_chave, valor_atual):
+    opcoes_fixas = [
+        "-- Selecione uma Justificativa Padrão --",
+        "MAJORADO EM FUNÇÃO DO IMÓVEL POSSUIR GERAÇÃO PRÓPRIA DE ENERGIA.",
+        "DEPRECIADO EM FUNÇÃO DO IMÓVEL POSSUIR ÁREA CONSTRUÍDA NÃO AVERBADA"
+    ]
+    escolha_sugestao = st.selectbox(f"💡 Sugestões: {label}", options=opcoes_fixas, key=f"sug_motivo_{campo_chave}")
+    val_base = valor_atual if escolha_sugestao == "-- Selecione uma Justificativa Padrão --" else escolha_sugestao
+    return st.text_input(label, value=val_base, key=f"input_val_{campo_chave}")
 
 def gerar_graficos_estatisticos(y_real_log, y_pred_log, cooks_d, limite_cook, df_modelo_final, col_area_base, col_valor_total, fator_escala):
     residuos_log = y_real_log - y_pred_log
@@ -636,10 +577,10 @@ with aba_repositorio:
     conn_rep.close()
 
 # =====================================================================
-# ABA 2: MOTOR DE HOMOGENEIZAÇÃO AVM (COM VARIÁVEIS E CLASSIFICAÇÃO RESTAURADAS)
+# ABA 2: MOTOR DE HOMOGENEIZAÇÃO AVM (COM SANEAMENTO E COOK)
 # =====================================================================
 with aba_avm:
-    st.subheader(f"📊 2. Carga, Multi-Documentos & Motor Estatístico AVM ({tipologia_imovel})")
+    st.subheader(f"📊 2. Carga, Saneamento & Motor Estatístico AVM ({tipologia_imovel})")
     
     col_up1, col_up2 = st.columns(2)
     with col_up1:
@@ -749,8 +690,29 @@ with aba_avm:
                         st.markdown(f"`{limites_amostra_dict[feat]}`")
                     st.divider()
 
+                # =====================================================
+                # MÓDULO DE SANEAMENTO (MICRONUMEROSIDADE) E COOK
+                # =====================================================
                 st.markdown("---")
-                st.subheader("4. Ajustes e Parâmetros de Avaliação")
+                st.subheader("🧹 4. Saneamento de Micronumerosidade & Distância de Cook")
+                
+                alertas_micro = verificar_micronumerosidade(df_modelo_teste, features_selecionadas, st.session_state.classificacoes_variaveis)
+                if alertas_micro:
+                    st.warning("⚠️ **Alertas de Micronumerosidade detectados (Categorias abaixo de 10% da amostra):**")
+                    for alerta in alertas_micro:
+                        st.markdown(alerta)
+                    if st.button("🧹 Executar Saneamento Automático (Micronumerosidade)"):
+                        df_modelo_teste, logs_rec = sanear_micronumerosidade_exato(df_modelo_teste, features_selecionadas, st.session_state.classificacoes_variaveis)
+                        for log_r in logs_rec: st.success(log_r)
+                        st.rerun()
+                else:
+                    st.success("✅ Nenhuma restrição de micronumerosidade encontrada nas variáveis dicotômicas, códigos ou proxies.")
+
+                df_modelo_final, cooks_d_arr, limite_cook_val = calcular_distancia_cook_e_filtrar(df_modelo_teste, col_alvo_temp, features_selecionadas)
+                st.info(f"📊 **Filtro de Distância de Cook aplicado:** {len(df_modelo_final)} comparáveis válidos mantidos (Limite de corte: {limite_cook_val:.4f}).")
+
+                st.markdown("---")
+                st.subheader("5. Ajustes e Parâmetros Finais de Avaliação")
                 col_aj1, col_aj2, col_aj3 = st.columns(3)
                 tipo_operador_ajuste = col_aj1.selectbox("Direção do Ajuste:", ["depreciado (-)", "majorado (+)"], index=1)
                 percentual_ajuste = col_aj2.number_input("Percentual de Ajuste (%)", value=0.0, step=0.5)
@@ -768,17 +730,17 @@ with aba_avm:
                     coeficientes = {'intercepto': 10.5, features_selecionadas[0]: 0.05}
                     
                     buf_ad, buf_res, buf_cook, buf_minmax = gerar_graficos_estatisticos(
-                        np.array([12.0, 12.5, 13.0]), np.array([12.1, 12.4, 13.1]), np.array([0.1, 0.2]), 0.5, df_modelo_teste, col_area_base, col_valor_total, 1.0
+                        np.array([12.0, 12.5, 13.0]), np.array([12.1, 12.4, 13.1]), cooks_d_arr, limite_cook_val, df_modelo_final, col_area_base, col_valor_total, 1.0
                     )
                     
                     pdf_bytes = gerar_laudo_pdf_ia(
                         tenant_selecionado, tipologia_imovel, ordem_servico_input or "OS-001", 
                         endereco_imovel_input or "Endereço Exemplo", informante_nome or "Responsável", informante_tel or "(62) 99999-9999",
-                        valores_dict_metricas, 0.95, 15.0, len(df_modelo_teste), features_selecionadas, coeficientes, valores_usuario,
+                        valores_dict_metricas, 0.95, 15.0, len(df_modelo_final), features_selecionadas, coeficientes, valores_usuario,
                         st.session_state.classificacoes_variaveis, st.session_state.especificacoes_variaveis, st.session_state.sinais_variaveis,
                         limites_amostra_dict, variaveis_extrapoladas, "Grau III", "Grau III", True, "RISCO MÍNIMO", 18,
                         tipo_operador_ajuste, percentual_ajuste, motivo_ajuste_input, "Observações padrão", True, logo_bytes_global,
-                        buf_ad, buf_res, buf_cook, buf_minmax, df_global, df_modelo_teste
+                        buf_ad, buf_res, buf_cook, buf_minmax, df_global, df_modelo_final
                     )
                     st.download_button("📄 Baixar Laudo Completo em PDF", data=pdf_bytes, file_name=f"laudo_nbr_{ordem_servico_input or 'OS001'}.pdf", mime="application/pdf")
 
