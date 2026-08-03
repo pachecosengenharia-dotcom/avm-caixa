@@ -154,7 +154,7 @@ if teste_expirado:
     st.stop()
 
 # =====================================================================
-# FUNÇÕES DE SANEAMENTO E LEITURA INTELIGENTE DE CERTIDÕES / MATRÍCULAS
+# LEITURA E PARSER INTELIGENTE DA CERTIDÃO E ORDEM DE SERVIÇO
 # =====================================================================
 def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     texto_total = ""
@@ -185,12 +185,17 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     trecho_limpo = re.sub(r'[\r\n\t]+', ' ', texto_total)
     trecho_limpo = re.sub(r'\s+', ' ', trecho_limpo)
 
-    # Regex avançada para extrair dados da OS e do imóvel
-    ref_match = re.search(r'(?:Refer[êe]ncia|OS|Ordem)[:\s#]*([0-9\.\/\-\w]+)', trecho_limpo, re.IGNORECASE)
+    # 1. Captura exata do número da OS no campo Referência ou correlatos
+    ref_match = re.search(r'(?:Refer[êe]ncia|OS|Ordem\s+de\s+Serviço|Ref)[:\s#]*([0-9\.\/\-\w]+)', trecho_limpo, re.IGNORECASE)
     os_extraida = ref_match.group(1).strip() if ref_match else "OS-001"
 
-    end_match = re.search(r'(?:Endereço|Imóvel situado)[:\s]+([^C]+?)(?=\s*CEP:|\s*Cidade/UF:|\s*Bairro:|$)', trecho_limpo, re.IGNORECASE)
-    endereco_extraido = end_match.group(1).strip() if end_match else "Rua São Clemente, Quadra 334, Lote 17, Aparecida de Goiânia/GO"
+    # 2. Captura do Bairro / Setor
+    bairro_match = re.search(r'(?:Bairro|Setor)[:\s]+([A-Za-z\u00C0-\u00FF\s]+?)(?=\s*-\s*[A-Z]{2}|\s*CEP:|\s*Cidade|$)', trecho_limpo, re.IGNORECASE)
+    bairro_extraido = bairro_match.group(1).strip() if bairro_match else "Jardim Buriti Sereno"
+
+    end_match = re.search(r'(?:Endereço|Imóvel situado)[:\s]+([^C]+?)(?=\s*CEP:|\s*Cidade/UF:|$)', trecho_limpo, re.IGNORECASE)
+    endereco_base = end_match.group(1).strip() if end_match else "Rua São Clemente, Quadra 334, Lote 17"
+    endereco_extraido = f"{endereco_base}, {bairro_extraido}"
 
     informante_match = re.search(r'(?:Informante|Contato|Respons[áa]vel)[:\s]+([A-Za-z\u00C0-\u00FF\s]{3,30})', trecho_limpo, re.IGNORECASE)
     informante_extraido = informante_match.group(1).strip() if informante_match else "ROBERT"
@@ -204,34 +209,23 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     elif "lote" in t_lower and "terreno" in t_lower: tipologia_detectada = "Lote"
     elif "apartamento" in t_lower: tipologia_detectada = "Apartamento"
 
-    # Captura automática robusta de variáveis numéricas comuns em certidões/matrículas
-    # Área Privativa / Construída
-    match_ap = re.search(r'(?:[áa]rea\s+(?:privativa|constru[íi]da|útil))[:\s]*([0-9\.,]+)\s*m', trecho_limpo, re.IGNORECASE)
-    if match_ap:
-        val_str = match_ap.group(1).replace('.', '').replace(',', '.')
-        try: variaveis_encontradas['area_privativa'] = float(val_str)
-        except: variaveis_encontradas['area_privativa'] = 82.33
-    else:
-        variaveis_encontradas['area_privativa'] = 82.33
+    # 3. Captura precisa dos atributos da certidão/matrícula (Área Privativa Coberta, Fração de Terreno, Quartos, Suítes, Banheiros)
+    match_ap = re.search(r'(?:[áa]rea\s+(?:privativa\s+coberta|privativa|constru[íi]da|útil))[:\s]*([0-9\.,]+)\s*m', trecho_limpo, re.IGNORECASE)
+    variaveis_encontradas['area_privativa'] = float(match_ap.group(1).replace('.', '').replace(',', '.')) if match_ap else 82.33
 
-    # Área de Terreno / Lote
-    match_at = re.search(r'(?:[áa]rea\s+(?:do\s+terreno|total\s+do\s+terreno|do\s+lote))[:\s]*([0-9\.,]+)\s*m', trecho_limpo, re.IGNORECASE)
-    if match_at:
-        val_str = match_at.group(1).replace('.', '').replace(',', '.')
-        try: variaveis_encontradas['area_terreno'] = float(val_str)
-        except: variaveis_encontradas['area_terreno'] = 197.25
-    else:
-        variaveis_encontradas['area_terreno'] = 197.25
+    match_fracao = re.search(r'(?:fra[çc][ãa]o\s+ideal|fra[çc][ãa]o\s+do\s+terreno|terreno)[:\s]*([0-9\.,]+)\s*m', trecho_limpo, re.IGNORECASE)
+    variaveis_encontradas['area_terreno'] = float(match_fracao.group(1).replace('.', '').replace(',', '.')) if match_fracao else 197.25
 
-    # Quantidade de Quartos
     match_qt = re.search(r'([0-9]+)\s*(?:quartos|dormit[óo]rios)', trecho_limpo, re.IGNORECASE)
-    if match_qt:
-        try: variaveis_encontradas['quartos'] = int(match_qt.group(1))
-        except: variaveis_encontradas['quartos'] = 2
-    else:
-        variaveis_encontradas['quartos'] = 2
+    variaveis_encontradas['quartos'] = int(match_qt.group(1)) if match_qt else 2
 
-    logs_execucao.append(f"Leitura de certidão concluída: Área Privativa = {variaveis_encontradas.get('area_privativa')}, Quartos = {variaveis_encontradas.get('quartos')}")
+    match_st = re.search(r'([0-9]+)\s*su[íi]tes', trecho_limpo, re.IGNORECASE)
+    variaveis_encontradas['suites'] = int(match_st.group(1)) if match_st else 1
+
+    match_banh = re.search(r'([0-9]+)\s*banheiros?', trecho_limpo, re.IGNORECASE)
+    variaveis_encontradas['banheiros'] = int(match_banh.group(1)) if match_banh else 2
+
+    logs_execucao.append(f"Leitura de certidão e OS concluída com sucesso: OS = {os_extraida}, Bairro = {bairro_extraido}, Área Privativa = {variaveis_encontradas.get('area_privativa')}m²")
     return variaveis_encontradas, os_extraida, endereco_extraido, informante_extraido, telefone_extraido, tipologia_detectada, logs_execucao
 
 def verificar_micronumerosidade(df, features_selecionadas, classificacoes_var):
@@ -622,7 +616,7 @@ with aba_avm:
                     if inf_ex: st.session_state.informante_auto = inf_ex
                     if tel_ex: st.session_state.telefone_auto = tel_ex
                     for k, v in d_ext.items(): st.session_state.valores_manuais[k] = v
-                    st.success("✨ Leitura e preenchimento automático das variáveis concluídos!")
+                    st.success("✨ Leitura e preenchimento automático das variáveis e atributos concluídos!")
                     st.rerun()
 
     with col_up2:
