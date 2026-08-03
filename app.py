@@ -155,7 +155,7 @@ if teste_expirado:
     st.stop()
 
 # =====================================================================
-# PROCESSAMENTO DE LEITURA DE PDF E IMAGENS (ORIGINAL RESTAURADO)
+# PROCESSAMENTO DE LEITURA OCR / CERTIDÕES APRIMORADO
 # =====================================================================
 def converter_extenso_para_numero(texto):
     mapa = {'um': 1, 'dois': 2, 'três': 3, 'quatro': 4, 'cinco': 5, 'seis': 6, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5}
@@ -196,30 +196,32 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
 
     variaveis_encontradas = {}
     
-    ref_match = re.search(r'Refer[êe]ncia[:\s#]*([A-Za-z0-9\.\/\-]+)', texto_total, re.IGNORECASE)
-    if not ref_match:
-        ref_match = re.search(r'(?:OS|Ordem\s+de\s+Serviço)[:\s#]*([A-Za-z0-9\.\/\-]+)', texto_total, re.IGNORECASE)
+    # 1. Ordem de Serviço / Referência
+    ref_match = re.search(r'(?:OS|Ordem\s+de\s+Serviço|Refer[êe]ncia)[:\s#]*([A-Za-z0-9\.\/\-]+)', texto_total, re.IGNORECASE)
     os_extraida = ref_match.group(1).strip() if ref_match else "7375.3596.000805648/2026.01.01"
 
-    inf_match = re.search(r'(?:Informante\s*/\s*Contato|Informante|Contato|Respons[áa]vel)[:\s]+([A-Z\u00C0-\u00DD\s]{3,30})', texto_total, re.IGNORECASE)
+    # 2. Informante / Contato
+    inf_match = re.search(r'(?:Informante\s*/\s*Contato|Informante|Contato|Respons[áa]vel)[:\s]+([A-Z\u00C0-\u00DD\s]{3,35})', texto_total, re.IGNORECASE)
     informante_extraido = inf_match.group(1).strip() if inf_match else "ROBERT"
-    for termo in ["Telefone", "Tel", "Cel", "Email"]:
+    for termo in ["Telefone", "Tel", "Cel", "Email", "Endereço"]:
         if termo in informante_extraido:
             informante_extraido = informante_extraido.split(termo)[0].strip()
 
-    tel_match = re.search(r'(?:Telefone\s+do\s+Contato|Tel(?:efone)?\s*(?:do\s+Contato)?|Cel(?:ular)?|Contato)[^\d]*(\(?\d{2}\)?\s*\d{4,5}[-\s]?\d{4})', texto_total, re.IGNORECASE)
+    # 3. Telefone robusto
+    tel_match = re.search(r'(?:Telefone|Tel|Celular|Cel|Contato)[^\d]*(\(?\d{2}\)?\s*\d{4,5}[-\s]?\d{4})', texto_total, re.IGNORECASE)
     if tel_match:
         telefone_extraido = tel_match.group(1).strip()
     else:
         tel_gen = re.search(r'\(?\d{2}\)?\s*\d{4,5}[-\s]?\d{4}', texto_total)
         telefone_extraido = tel_gen.group(0).strip() if tel_gen else "(62) 3086-6956"
 
-    end_match = re.search(r'(?:Endereço(?:\s+do\s+Imóvel)?|Imóvel situado)[:\s]+([^\n\r]+)', texto_total, re.IGNORECASE)
+    # 4. Endereço completo robusto
+    end_match = re.search(r'(?:Endereço(?:\s+do\s+Imóvel)?|Imóvel situado|Localização)[:\s]+([^\n\r]+)', texto_total, re.IGNORECASE)
     if end_match:
         endereco_extraido = end_match.group(1).strip()
     else:
-        rua_match = re.search(r'((?:Rua|Av\.|Avenida|Alameda|Praça|Quadra|Lote)[^\n\r,]+(?:,\s*[^\n\r,]+){1,5})', texto_total, re.IGNORECASE)
-        endereco_extraido = rua_match.group(1).strip() if rua_match else "Rua São Clemente, Quadra 334, Lote 17, Jardim Buriti Sereno"
+        rua_match = re.search(r'((?:Rua|Av\.|Avenida|Alameda|Praça|Quadra|Lote)[^\n\r]+(?:,\s*[^\n\r]+){1,3})', texto_total, re.IGNORECASE)
+        endereco_extraido = rua_match.group(1).strip() if rua_match else "Rua São Clemente, Quadra 334, Lote 17, Jardim Buriti Sereno, Goiânia - GO"
 
     tipologia_detectada = "Casa"
     t_lower = texto_total.lower()
@@ -371,7 +373,8 @@ def gerar_laudo_pdf_ia(tenant, tipologia, ordem_servico, endereco, informante, t
 
     story = [Paragraph("LAUDO TÉCNICO DE AVALIAÇÃO - AVM (NBR 14653)", title_style),
              Paragraph(f"<b>OS:</b> {ordem_servico} | <b>Tomador:</b> {tenant} | <b>Tipologia:</b> {tipologia}", text_style),
-             Paragraph(f"<b>Endereço:</b> {endereco}", text_style), Spacer(1, 4)]
+             Paragraph(f"<b>Endereço:</b> {endereco}", text_style),
+             Paragraph(f"<b>Observações Gerais:</b> {observacoes_gerais}", text_style), Spacer(1, 4)]
     
     doc.build(story, onFirstPage=cabecalho_banner, onLaterPages=cabecalho_banner)
     buffer.seek(0)
@@ -385,7 +388,7 @@ st.markdown("Gerenciamento integrado de bases municipais, dados institucionais e
 st.divider()
 
 if 'os_auto' not in st.session_state: st.session_state.os_auto = "7375.3596.000805648/2026.01.01"
-if 'endereco_auto' not in st.session_state: st.session_state.endereco_auto = "Rua São Clemente, Quadra 334, Lote 17, Jardim Buriti Sereno"
+if 'endereco_auto' not in st.session_state: st.session_state.endereco_auto = "Rua São Clemente, Quadra 334, Lote 17, Jardim Buriti Sereno, Goiânia - GO"
 if 'informante_auto' not in st.session_state: st.session_state.informante_auto = "ROBERT"
 if 'telefone_auto' not in st.session_state: st.session_state.telefone_auto = "(62) 3086-6956"
 if 'tipologia_auto' not in st.session_state: st.session_state.tipologia_auto = "Casa"
@@ -646,7 +649,7 @@ with aba_avm:
                 col_h1, col_h2, col_h3, col_h4, col_h5, col_h6 = st.columns([1.2, 1, 1.8, 1.2, 0.8, 1.2])
                 col_h1.markdown("**Variável**")
                 col_h2.markdown("**Valor Avaliando**")
-                col_h3.markdown("**Especificação do Imóvel (Nomeada)**")
+                col_h3.markdown("**Especificação do Imóvel (Editável)**")
                 col_h4.markdown("**Classificação**")
                 col_h5.markdown("**Sinal**")
                 col_h6.markdown("**Limites Amostra**")
@@ -670,10 +673,12 @@ with aba_avm:
                             variaveis_extrapoladas.append(f"{feat} (Valor Avaliando: {val_inp} fora dos limites [{min_am:.2f} - {max_am:.2f}])")
 
                     with col_r3:
-                        # Campo de Especificação com preenchimento automático integrado e nomeado
-                        key_esp = f"esp_val_{tipologia_imovel}_{feat}"
+                        # Campo Especificação com total liberdade de edição e sugestões
+                        key_esp_sug = f"esp_sug_{tipologia_imovel}_{feat}"
+                        key_esp_txt = f"esp_txt_{tipologia_imovel}_{feat}"
+                        
                         opcoes_especificacao = [
-                            "-- Selecione a Especificação --",
+                            "-- Digite ou selecione abaixo --",
                             "ÁREA DO LOTE EM M²",
                             "QUANTIDADE DE QUARTOS TOTAIS DO IMÓVEL",
                             "ÁREA CONSTRUÍDA COBERTA EM M²",
@@ -681,15 +686,11 @@ with aba_avm:
                             "1 = NORMAL/BAIXO; 2 = NORMAL; 3 = NORMAL/ALTO; 4 = ALTO"
                         ]
                         
-                        val_atual_esp = st.session_state.especificacoes_variaveis.get(key_esp, opcoes_especificacao[0])
-                        esp_selecionada = st.selectbox(
-                            f"Especificação {feat}",
-                            options=opcoes_especificacao,
-                            index=opcoes_especificacao.index(val_atual_esp) if val_atual_esp in opcoes_especificacao else 0,
-                            key=key_esp,
-                            label_visibility="collapsed"
-                        )
-                        st.session_state.especificacoes_variaveis[feat] = "" if esp_selecionada == "-- Selecione a Especificação --" else esp_selecionada
+                        sug_escolhida = st.selectbox(f"💡 Sugestão {feat}", options=opcoes_especificacao, key=key_esp_sug, label_visibility="collapsed")
+                        default_val = "" if sug_escolhida == "-- Digite ou selecione abaixo --" else sug_escolhida
+                        
+                        val_digitado = st.text_input(f"Especificação Editável {feat}", value=default_val, key=key_esp_txt, placeholder="Digite a especificação", label_visibility="collapsed")
+                        st.session_state.especificacoes_variaveis[feat] = val_digitado
 
                     with col_r4:
                         class_atual = st.session_state.classificacoes_variaveis.get(feat, "Quantitativa")
@@ -735,13 +736,21 @@ with aba_avm:
                 tipo_operador_ajuste = col_aj1.selectbox("Direção do Ajuste:", ["depreciado (-)", "majorado (+)"], index=1)
                 percentual_ajuste = col_aj2.number_input("Percentual de Ajuste (%)", value=0.0, step=0.5)
                 
-                key_mot = f"motivo_val_{tipologia_imovel}"
+                # Justificativa Técnica Totalmente Editável
+                key_mot_sug = f"motivo_sug_{tipologia_imovel}"
+                key_mot_txt = f"motivo_txt_{tipologia_imovel}"
                 opcoes_motivo = [
-                    "-- Selecione uma Justificativa --",
+                    "-- Digite ou selecione uma Justificativa Padrão --",
                     "MAJORADO EM FUNÇÃO DO IMÓVEL POSSUIR GERAÇÃO PRÓPRIA DE ENERGIA.",
                     "DEPRECIADO EM FUNÇÃO DO IMÓVEL POSSUIR ÁREA CONSTRUÍDA NÃO AVERBADA"
                 ]
-                motivo_ajuste_input = st.selectbox("Justificativa Técnica do Ajuste", options=opcoes_motivo, key=key_mot)
+                sug_mot = st.selectbox("💡 Sugestões de Justificativa Técnica", options=opcoes_motivo, key=key_mot_sug)
+                default_mot = "" if sug_mot == "-- Digite ou selecione uma Justificativa Padrão --" else sug_mot
+                motivo_ajuste_input = st.text_input("Justificativa Técnica do Ajuste (Editável)", value=default_mot, key=key_mot_txt, placeholder="Digite a justificativa técnica")
+
+                st.markdown("---")
+                st.subheader("6. Observações Gerais do Laudo")
+                observacoes_gerais_input = st.text_area("Observações Gerais (Aparecerão no Laudo PDF)", value="Imóvel vistoriado in loco, apresentando padrão construtivo compatível com a região. Documentação conferida e aprovada.", key=f"obs_gerais_{tipologia_imovel}")
 
                 st.markdown("---")
                 if st.button("🚀 Executar Modelo Estatístico e Gerar Laudo PDF NBR"):
@@ -764,7 +773,7 @@ with aba_avm:
                         valores_dict_metricas, 0.95, 15.0, len(df_modelo_final), features_selecionadas, coeficientes, valores_usuario,
                         st.session_state.classificacoes_variaveis, st.session_state.especificacoes_variaveis, st.session_state.sinais_variaveis,
                         limites_amostra_dict, variaveis_extrapoladas, "Grau III", "Grau III", True, "RISCO MÍNIMO", 18,
-                        tipo_operador_ajuste, percentual_ajuste, motivo_ajuste_input, "Observações padrão", True, logo_bytes_global,
+                        tipo_operador_ajuste, percentual_ajuste, motivo_ajuste_input, observacoes_gerais_input, True, logo_bytes_global,
                         buf_ad, buf_res, buf_cook, buf_minmax, df_global, df_modelo_final
                     )
                     st.download_button("📄 Baixar Laudo Completo em PDF", data=pdf_bytes, file_name=f"laudo_nbr_{ordem_servico_input or 'OS001'}.pdf", mime="application/pdf")
