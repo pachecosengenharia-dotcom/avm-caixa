@@ -251,9 +251,7 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     variaveis_encontradas['area_privativa'] = converter_valor_num(match_ap, 82.33)
     variaveis_encontradas['area_construida'] = variaveis_encontradas['area_privativa']
 
-    # =========================================================================
-    # REQUISIÇÃO 1: ÁREA DO TERRENO (PRIORIDADE ABSOLUTA PARA FRAÇÃO IDEAL)
-    # =========================================================================
+    # Área do Terreno (Fração Ideal)
     match_at = re.search(r'fra[çc][ãa]o\s+ideal[^0-9]*([0-9\.,]+)', texto_total, re.IGNORECASE)
     if not match_at:
         match_at = re.search(r'(?:[áa]rea\s+(?:do\s+terreno|total\s+do\s+terreno|do\s+lote|terreno\s+fração|quota[- ]parte))[:\s]*([0-9\.,]+)', texto_total, re.IGNORECASE)
@@ -264,9 +262,7 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     variaveis_encontradas['area_terreno'] = val_terreno_extraido
     variaveis_encontradas['area_do_terreno'] = val_terreno_extraido
 
-    # =========================================================================
-    # REQUISIÇÃO 2: QUANTIDADE DE QUARTOS (RASTREIO AMPLIADO)
-    # =========================================================================
+    # Quartos
     match_qt = re.search(r'(?:quartos|dormit[óo]rios|c[ôo]modos)[:\s]*([0-9]+|\b(?:um|dois|três|quatro|cinco)\b)', texto_total, re.IGNORECASE)
     if not match_qt:
         match_qt = re.search(r'([0-9]+|\b(?:um|dois|três|quatro|cinco)\b)\s*(?:quartos|dormit[óo]rios|c[ôo]modos)', texto_total, re.IGNORECASE)
@@ -311,13 +307,18 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     logs_execucao.append(f"Leitura concluída com sucesso: OS = {os_extraida}")
     return variaveis_encontradas, os_extraida, end_completo, informante_extraido, telefone_extraido, tipologia_detectada, logs_execucao
 
-def verificar_micronumerosidade(df, features_selecionadas, classificacoes_var):
+def verificar_micronumerosidade_com_classificacao(df, features_selecionadas, classificacoes_var):
+    """
+    Só executa o alerta de micronumerosidade se o usuário tiver classificado 
+    a variável como Dicotômica, Código Alocado ou Proxy Temporal.
+    """
     alertas = []
     n_total = len(df)
     tipos_saneaveis = ["Dicotômica", "Código Alocado", "Proxy Temporal"]
     for feat in features_selecionadas:
         if feat not in df.columns: continue
         tipo_atual = classificacoes_var.get(feat, "Quantitativa")
+        # Se estiver como 'Quantitativa' (padrão), o sistema não faz julgamento de micronumerosidade de categorias
         if tipo_atual not in tipos_saneaveis: continue
         serie = df[feat]
         for val in serie.unique():
@@ -672,9 +673,11 @@ with aba_avm:
             termos_exclusao = ['valor_unitario', 'vu', 'id']
             features_disponiveis = [c for c in colunas_numericas if c != col_valor_total and not any(t in c.lower() for t in termos_exclusao)]
 
+            # Garante que idade_aparente e quartos apareçam por padrão se existirem
             default_features = [c for c in features_disponiveis if c != col_area_base][:min(2, len(features_disponiveis))]
-            if 'idade_aparente' in features_disponiveis and 'idade_aparente' not in default_features:
-                default_features.append('idade_aparente')
+            for feat_obrigatoria in ['idade_aparente', 'quartos']:
+                if feat_obrigatoria in features_disponiveis and feat_obrigatoria not in default_features:
+                    default_features.append(feat_obrigatoria)
 
             features_selecionadas = st.multiselect(
                 "Escolha as Variáveis Independentes do Modelo:",
@@ -778,12 +781,14 @@ with aba_avm:
                     st.success("✅ Nenhuma extrapolação identificada. Todos os atributos do imóvel avaliando estão dentro dos limites da amostra.")
 
                 # =====================================================
-                # MÓDULO DE SANEAMENTO E COOK
+                # MÓDULO DE SANEAMENTO CONDICIONADO À CLASSIFICAÇÃO
                 # =====================================================
                 st.markdown("---")
                 st.subheader("🧹 4. Saneamento de Micronumerosidade & Distância de Cook")
                 
-                alertas_micro = verificar_micronumerosidade(df_modelo_teste, features_selecionadas, st.session_state.classificacoes_variaveis)
+                # Só verifica micronumerosidade se o usuário classificou alguma variável como Dicotômica, Código Alocado ou Proxy Temporal
+                alertas_micro = verificar_micronumerosidade_com_classificacao(df_modelo_teste, features_selecionadas, st.session_state.classificacoes_variaveis)
+                
                 if alertas_micro:
                     st.warning("⚠️ **Alertas de Micronumerosidade detectados (Categorias abaixo de 10% da amostra):**")
                     for alerta in alertas_micro:
@@ -793,7 +798,7 @@ with aba_avm:
                         for log_r in logs_rec: st.success(log_r)
                         st.rerun()
                 else:
-                    st.success("Nenhuma restrição de micronumerosidade encontrada nas variáveis dicotômicas, códigos alocados ou proxy temporal.")
+                    st.info("ℹ️ Saneamento de micronumerosidade em modo de espera: classifique as variáveis acima como 'Dicotômica', 'Código Alocado' ou 'Proxy Temporal' para que o sistema analise a proporção de 10% das categorias.")
 
                 df_modelo_final, cooks_d_arr, limite_cook_val = calcular_distancia_cook_e_filtrar(df_modelo_teste, col_alvo_temp, features_selecionadas)
                 st.info(f"📊 **Filtro de Distância de Cook aplicado:** {len(df_modelo_final)} comparáveis válidos mantidos (Limite de corte: {limite_cook_val:.4f}).")
