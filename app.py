@@ -514,8 +514,22 @@ with aba_repositorio:
     if arquivo_remessa is not None:
         if st.button("💾 Salvar e Consolidar no Repositório Central"):
             try:
-                df_novo = pd.read_csv(arquivo_remessa, encoding='latin1', sep=None, engine='python', on_bad_lines='skip') if arquivo_remessa.name.endswith('.csv') else pd.read_excel(arquivo_remessa)
+                if arquivo_remessa.name.endswith('.csv'):
+                    df_novo = pd.read_csv(arquivo_remessa, encoding='latin1', sep=None, engine='python', on_bad_lines='skip')
+                else:
+                    df_novo = pd.read_excel(arquivo_remessa)
+                
+                # Saneamento e unicidade de colunas para evitar falhas no SQLite
                 df_novo.columns = [str(c).lower().strip().replace(" ", "_") for c in df_novo.columns]
+                cols_unicas = []
+                for c in df_novo.columns:
+                    base_c = c
+                    i = 1
+                    while c in cols_unicas:
+                        c = f"{base_c}_{i}"
+                        i += 1
+                    cols_unicas.append(c)
+                df_novo.columns = cols_unicas
                 
                 col_area = next((c for c in df_novo.columns if 'area' in c), None)
                 col_valor = next((c for c in df_novo.columns if 'valor' in c or 'preco' in c), None)
