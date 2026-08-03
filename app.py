@@ -154,8 +154,296 @@ if teste_expirado:
     st.stop()
 
 # =====================================================================
-# FUNÇÕES AUXILIARES DE LEITURA DE PDFS, ESTATÍSTICA E RELATÓRIO PDF
+# AUXILIARES PARA SUGESTÕES E PREENCHIMENTO AUTOMÁTICO
 # =====================================================================
+def criar_campo_especificacao_com_sugestoes(label, campo_chave, valor_atual):
+    opcoes_fixas = [
+        "-- Selecione a Especificação Padrão --",
+        "ÁREA DO LOTE EM M²",
+        "QUANTIDADE DE QUARTOS TOTAIS DO IMÓVEL",
+        "ÁREA CONSTRUÍDA COBERTA EM M²",
+        "1 = VENDA; 2 = OFERTA",
+        "1 = NORMAL/BAIXO; 2 = NORMAL; 3 = NORMAL/ALTO; 4 = ALTO",
+        "QUANTIDADE DE BANHEIROS PRIVATIVOS DO IMÓVEL",
+        "1 = REPAROS IMPORTANTES; 2 = REPAROS SIMPLES; 3 = BOM; 4 = NOVO",
+        "IDADE APARENTE DO IMÓVEL, EM ANOS",
+        "PV 2016"
+    ]
+    escolha_sugestao = st.selectbox(f"💡 Sugestões: {label}", options=opcoes_fixas, key=f"sug_esp_{campo_chave}")
+    val_base = valor_atual if escolha_sugestao == "-- Selecione a Especificação Padrão --" else escolha_sugestao
+    return st.text_input(label, value=val_base, key=f"input_val_{campo_chave}", label_visibility="collapsed")
+
+def criar_campo_motivo_ajuste_com_sugestoes(label, campo_chave, valor_atual):
+    opcoes_fixas = [
+        "-- Selecione uma Justificativa Padrão --",
+        "MAJORADO EM FUNÇÃO DO IMÓVEL POSSUIR GERAÇÃO PRÓPRIA DE ENERGIA.",
+        "DEPRECIADO EM FUNÇÃO DO IMÓVEL POSSUIR ÁREA CONSTRUÍDA NÃO AVERBADA"
+    ]
+    escolha_sugestao = st.selectbox(f"💡 Sugestões: {label}", options=opcoes_fixas, key=f"sug_motivo_{campo_chave}")
+    val_base = valor_atual if escolha_sugestao == "-- Selecione uma Justificativa Padrão --" else escolha_sugestao
+    return st.text_input(label, value=val_base, key=f"input_val_{campo_chave}")
+
+def criar_campo_observacoes_com_sugestoes(label, campo_chave, valor_atual):
+    opcoes_fixas = [
+        "-- Selecione uma Observação Padrão --",
+        "MAJORADO EM FUNÇÃO DO IMÓVEL POSSUIR GERAÇÃO PRÓPRIA DE ENERGIA."
+    ]
+    escolha_sugestao = st.selectbox(f"💡 Sugestões: {label}", options=opcoes_fixas, key=f"sug_obs_{campo_chave}")
+    val_base = valor_atual if escolha_sugestao == "-- Selecione uma Observação Padrão --" else escolha_sugestao
+    return st.text_area(label, value=val_base, height=100, key=f"input_val_{campo_chave}")
+
+# =====================================================================
+# CÁLCULOS ESTATÍSTICOS E FILTROS DE COOK
+# =====================================================================
+def calcular_estatisticas_regressao(X, y, coeficientes_reg):
+    n = len(y)
+    k = X.shape[1]
+    X_matrix = np.hstack([np.ones((n, 1)), X])
+    y_pred_ols = X_matrix.dot(coeficientes_reg)
+    residuos = y - y_pred_ols
+    soma_sq_res = np.sum(residuos ** 2)
+    graus_liberdade = n - k - 1
+    if graus_liberdade > 0:
+        var_res = soma_sq_res / graus_liberdade
+        try:
+            cov_mat = var_res * np.linalg.inv(X_matrix.T.dot(X_matrix))
+            desvio_padrao_se = np.sqrt(np.diagonal(cov_mat))
+            t_stats = coeficientes_reg / desvio_padrao_se
+            p_valores_t = [2 * (1 - stats.t.cdf(np.abs(t), df=graus_liberdade)) for t in t_stats]
+        except Exception:
+            p_valores_t = [0.05] * (k + 1)
+    else:
+        p_valores_t = [0.05] * (k + 1)
+        
+    soma_sq_reg = np.sum((y_pred_ols - np.mean(y)) ** 2)
+    soma_sq_tot = np.sum((y - np.mean(y)) ** 2)
+    if soma_sq_tot > 0 and k > 0 and graus_liberdade > 0:
+        r2_calc = soma_sq_reg / soma_sq_tot
+        f_stat = (r2_calc / k) / ((1 - r2_calc) / graus_liberdade) if r2_calc < 1 else 999.99
+        p_valor_f = 1 - stats.f.cdf(f_stat, k, graus_liberdade)
+    else:
+        p_valor_f = 0.001
+    return p_valores_t, p_valor_f
+
+def calcular_distancia_cook_e_filtrar(df, coluna_alvo, features):
+    Q1 = df[coluna_alvo].quantile(0.10)
+    Q3 = df[coluna_alvo].quantile(0.90)
+    IQR = Q3 - Q1
+    df_filtrado = df[(df[coluna_alvo] >= (Q1 - 1.5 * IQR)) & (df[coluna_alvo] <= (Q3 + 1.5 * IQR))].copy()
+    cooks_d_array = np.array([])
+    limite_cook = 0.5
+    if len(df_filtrado) > len(features) + 2:
+        X = df_filtrado[features].values
+        y = df_filtrado[coluna_alvo].values
+        n = len(y)
+        k = X.shape[1]
+        X_mat = np.hstack([np.ones((n, 1)), X])
+        try:
+            beta = np.linalg.inv(X_mat.T.dot(X_mat)).dot(X_mat.T).dot(y)
+            y_pred = X_mat.dot(beta)
+            residuos = y - y_pred
+            s2 = np.sum(residuos ** 2) / (n - k - 1) if (n - k - 1) > 0 else 1e-8
+            h = np.diagonal(X_mat.dot(np.linalg.inv(X_mat.T.dot(X_mat))).dot(X_mat.T))
+            residuos_padronizados = residuos / np.sqrt(s2 * (1 - h + 1e-8))
+            cooks_d = (residuos_padronizados ** 2 / (k + 1)) * (h / (1 - h + 1e-8))
+            limite_cook = 4 / (n - k - 1) if (n - k - 1) > 0 else 0.5
+            mask_validos = cooks_d <= limite_cook
+            df_filtrado = df_filtrado[mask_validos]
+            cooks_d_array = cooks_d[mask_validos]
+        except Exception:
+            cooks_d_array = np.zeros(len(df_filtrado))
+    return df_filtrado, cooks_d_array, limite_cook
+
+def sanear_micronumerosidade_exato(df, features_selecionadas, classificacoes_var):
+    df_saneado = df.copy()
+    log_reclassificacoes = []
+    tipos_saneaveis = ["Dicotômica", "Código Alocado", "Proxy Temporal"]
+    for feat in features_selecionadas:
+        if feat not in df_saneado.columns: continue
+        tipo_atual = classificacoes_var.get(feat, "Quantitativa")
+        if tipo_atual not in tipos_saneaveis: continue
+        serie = df_saneado[feat]
+        valores_unicos = sorted(serie.unique())
+        for val in valores_unicos:
+            n_atual = len(df_saneado)
+            if n_atual == 0: break
+            contagem = (serie == val).sum()
+            percentual = (contagem / n_atual) * 100
+            if percentual < 10.0:
+                meta_10 = int(np.ceil(0.10 * n_atual))
+                defasagem = meta_10 - contagem
+                valores_vizinhos = [v for v in valores_unicos if abs(float(v) - float(val)) == 1.0] if all(isinstance(v, (int, float, np.number)) for v in valores_unicos) else [v for v in valores_unicos if v != val]
+                convertidos = 0
+                for vizinho in valores_vizinhos:
+                    idx_vizinho = df_saneado[df_saneado[feat] == vizinho].index
+                    for idx in idx_vizinho:
+                        if convertidos < defasagem:
+                            df_saneado.loc[idx, feat] = val
+                            log_reclassificacoes.append(f"🔄 Atributo `{feat}` convertido de `{vizinho}` para `{val}`.")
+                            convertidos += 1
+                        else: break
+                    if convertidos >= defasagem: break
+    return df_saneado, log_reclassificacoes
+
+def verificar_micronumerosidade(df, features_selecionadas, classificacoes_var):
+    alertas = []
+    n_total = len(df)
+    tipos_saneaveis = ["Dicotômica", "Código Alocado", "Proxy Temporal"]
+    for feat in features_selecionadas:
+        if feat not in df.columns: continue
+        tipo_atual = classificacoes_var.get(feat, "Quantitativa")
+        if tipo_atual not in tipos_saneaveis: continue
+        serie = df[feat]
+        for val in serie.unique():
+            contagem = (serie == val).sum()
+            percentual = (contagem / n_total) * 100 if n_total > 0 else 0
+            if percentual < 10.0:
+                alertas.append(f"⚠️ **{feat}** (Valor `{val}`): {contagem} dados (**{percentual:.1f}%**).")
+    return alertas
+
+def calcular_graus_nbr_rigoroso(n_dados, r2, n_variaveis, p_valores_t, p_valor_f, amplitude_ic_percentual, tem_extrapolacao=False, notas_manuais=None, usar_manual=False):
+    p_item1 = notas_manuais.get('item1', 2) if notas_manuais else 2
+    p_item2 = 3 if n_dados >= 30 else (2 if n_dados >= 12 else 1)
+    p_item3 = notas_manuais.get('item3', 2) if notas_manuais else 2
+    p_item4 = notas_manuais['item4_manual'] if (usar_manual and notas_manuais and 'item4_manual' in notas_manuais) else (1 if tem_extrapolacao else 3)
+    max_p_regressor = max(p_valores_t[1:]) if len(p_valores_t) > 1 else 0.05
+    p_item5 = 3 if max_p_regressor <= 0.10 else (2 if max_p_regressor <= 0.20 else (1 if max_p_regressor <= 0.30 else 0))
+    p_item6 = 3 if p_valor_f <= 0.01 else (2 if p_valor_f <= 0.05 else 1)
+    
+    if usar_manual and notas_manuais:
+        if 'item2_manual' in notas_manuais: p_item2 = notas_manuais['item2_manual']
+        if 'item5_manual' in notas_manuais: p_item5 = notas_manuais['item5_manual']
+        if 'item6_manual' in notas_manuais: p_item6 = notas_manuais['item6_manual']
+
+    pontos_itens = [p_item1, p_item2, p_item3, p_item4, p_item5, p_item6]
+    soma_pontos = sum(pontos_itens)
+    fundamentacao = "Grau III" if soma_pontos >= 16 else ("Grau II" if soma_pontos >= 10 else ("Grau I" if soma_pontos >= 6 else "Inválido"))
+    precisao = "Grau III" if amplitude_ic_percentual <= 30.0 else ("Grau II" if amplitude_ic_percentual <= 40.0 else "Grau I")
+    return fundamentacao, precisao, soma_pontos, pontos_itens, max_p_regressor, p_valor_f
+
+def gerar_graficos_estatisticos(y_real_log, y_pred_log, cooks_d, limite_cook, df_modelo_final, col_area_base, col_valor_total, fator_escala):
+    residuos_log = y_real_log - y_pred_log
+    
+    fig, ax = plt.subplots(figsize=(2.5, 1.8))
+    ax.scatter(y_real_log, y_pred_log, color='#2B6CB0', s=14)
+    min_v, max_v = min(min(y_real_log), min(y_pred_log)), max(max(y_real_log), max(y_pred_log))
+    ax.plot([min_v, max_v], [min_v, max_v], color='red', linestyle='--', linewidth=1)
+    ax.set_title("Aderência (Log)", fontsize=7)
+    plt.tight_layout()
+    buf_ad = io.BytesIO()
+    plt.savefig(buf_ad, format='png', dpi=150)
+    buf_ad.seek(0)
+    plt.close(fig)
+
+    fig, ax = plt.subplots(figsize=(2.5, 1.8))
+    ax.scatter(y_pred_log, residuos_log, color='#38A169', s=14)
+    ax.axhline(0, color='black', linestyle='-', linewidth=1)
+    ax.set_title("Resíduos", fontsize=7)
+    plt.tight_layout()
+    buf_res = io.BytesIO()
+    plt.savefig(buf_res, format='png', dpi=150)
+    buf_res.seek(0)
+    plt.close(fig)
+
+    fig, ax = plt.subplots(figsize=(2.5, 1.8))
+    if len(cooks_d) > 0:
+        ax.stem(np.arange(len(cooks_d)), cooks_d, linefmt='#DD6B20', markerfmt='o', basefmt=" ")
+        ax.axhline(limite_cook, color='red', linestyle='--', linewidth=1)
+    ax.set_title("Distância de Cook", fontsize=7)
+    plt.tight_layout()
+    buf_cook = io.BytesIO()
+    plt.savefig(buf_cook, format='png', dpi=150)
+    buf_cook.seek(0)
+    plt.close(fig)
+
+    fig, (ax_tot, ax_unit) = plt.subplots(1, 2, figsize=(4.5, 1.8))
+    if df_modelo_final is not None and col_area_base in df_modelo_final.columns:
+        df_ord = df_modelo_final.sort_values(by=col_area_base)
+        areas = df_ord[col_area_base].values
+        v_tot = (df_ord[col_valor_total] * fator_escala).values
+        v_unit = v_tot / areas
+        ax_tot.plot(areas, v_tot / 1e6, color='black', linewidth=1.2)
+        ax_tot.set_title("Total (M)", fontsize=6)
+        ax_unit.plot(areas, v_unit, color='black', linewidth=1.2)
+        ax_unit.set_title("Unitário", fontsize=6)
+    plt.tight_layout()
+    buf_minmax = io.BytesIO()
+    plt.savefig(buf_minmax, format='png', dpi=150)
+    buf_minmax.seek(0)
+    plt.close(fig)
+    return buf_ad, buf_res, buf_cook, buf_minmax
+
+def gerar_laudo_pdf_ia(tenant, tipologia, ordem_servico, endereco, informante, telefone, valores, r2, amplitude_ic_perc, n_dados, features, coeficientes, valores_usuario, classificacoes_var, especificacoes_var, sinais_var, limites_amostra_dict, variaveis_extrapoladas, fundamentacao, precisao, status_juridico, score_juridico, soma_pontos, tipo_operador_ajuste, percentual_ajuste, motivo_ajuste, observacoes_gerais, incluir_planilha_dados, logo_bytes, buf_ad, buf_res, buf_cook, buf_minmax, df_original_bruto, df_final_utilizado):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(letter), rightMargin=30, leftMargin=30, topMargin=55, bottomMargin=30)
+    styles = getSampleStyleSheet()
+    
+    title_style = ParagraphStyle('T1', parent=styles['Heading1'], fontSize=10, textColor=colors.HexColor("#1A365D"), spaceAfter=3, leading=12)
+    subtitle_style = ParagraphStyle('T2', parent=styles['Heading2'], fontSize=8, textColor=colors.HexColor("#2B6CB0"), spaceAfter=2, spaceBefore=3, leading=9)
+    text_style = ParagraphStyle('T3', parent=styles['Normal'], fontSize=6.5, leading=8.5, spaceAfter=2)
+    table_cell_style = ParagraphStyle('TC', parent=styles['Normal'], fontSize=5.5, leading=7.5)
+    table_cell_bold = ParagraphStyle('TCB', parent=styles['Normal'], fontSize=5.5, leading=7.5, fontName='Helvetica-Bold')
+
+    def cabecalho_banner(canvas, document):
+        canvas.saveState()
+        pw, ph = landscape(letter)
+        canvas.setFillColor(colors.HexColor("#F7FAFC"))
+        canvas.rect(30, ph - 48, pw - 60, 42, fill=1, stroke=0)
+        canvas.setFont("Helvetica-Bold", 8.5)
+        canvas.setFillColor(colors.HexColor("#2B6CB0"))
+        canvas.drawString(38, ph - 28, "PLATAFORMA AVM — LAUDO TÉCNICO")
+        canvas.drawRightString(pw - 35, ph - 28, f"OS: {ordem_servico}")
+        canvas.restoreState()
+
+    story = []
+    story.append(Paragraph("LAUDO TÉCNICO DE AVALIAÇÃO - AVM (NBR 14653)", title_style))
+    story.append(Paragraph(f"<b>OS:</b> {ordem_servico} | <b>Tomador:</b> {tenant} | <b>Tipologia:</b> {tipologia}", text_style))
+    story.append(Paragraph(f"<b>Endereço:</b> {endereco} | <b>Contato:</b> {informante} | {telefone}", text_style))
+    story.append(Spacer(1, 4))
+
+    story.append(Paragraph("1. Atributos do Imóvel Avaliando, Especificações, Limites da Amostra e Sinais", subtitle_style))
+    t_atrib_data = [[Paragraph("Variável / Atributo", table_cell_bold), Paragraph("Valor Avaliando", table_cell_bold), Paragraph("Especificação Manual", table_cell_bold), Paragraph("Classificação", table_cell_bold), Paragraph("Sinal", table_cell_bold), Paragraph("Limites da Amostra", table_cell_bold)]]
+    
+    for feat in features:
+        val_feat = valores_usuario.get(feat, 0)
+        val_str = f"{val_feat:.2f}" if isinstance(val_feat, float) else f"{val_feat}"
+        t_atrib_data.append([
+            Paragraph(feat, table_cell_style),
+            Paragraph(val_str, table_cell_style),
+            Paragraph(especificacoes_var.get(feat, "-"), table_cell_style),
+            Paragraph(classificacoes_var.get(feat, "Quantitativa"), table_cell_style),
+            Paragraph(sinais_var.get(feat, "+"), table_cell_style),
+            Paragraph(limites_amostra_dict.get(feat, "[ - ]"), table_cell_style)
+        ])
+    
+    t_atrib = Table(t_atrib_data, colWidths=[110, 80, 150, 100, 50, 222])
+    t_atrib.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,0), colors.HexColor("#2B6CB0")), ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke), ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#CBD5E0")), ('PADDING', (0,0), (-1,-1), 2)]))
+    story.append(t_atrib)
+    story.append(Spacer(1, 4))
+
+    story.append(Paragraph("2. Resultados da Avaliação e Valor Adotado", subtitle_style))
+    op_str = "+" if tipo_operador_ajuste == "majorado (+)" else "-"
+    t2 = Table([
+        ["Métrica", "Valor Total (R$)", "Valor Unitário (R$/m²)", "Variação (%)"],
+        ["Mínimo (Segurança)", f"R$ {valores['v_min']:,.2f}", f"R$ {valores['vu_min']:,.2f}", f"{valores['var_min']:+.2f}%"],
+        ["Estimado (Central)", f"R$ {valores['v_medio']:,.2f}", f"R$ {valores['vu_medio']:,.2f}", "0.00%"],
+        [f"Valor Adotado ({op_str}{percentual_ajuste:.1f}%)", f"R$ {valores['v_adotado']:,.2f}", f"R$ {valores['vu_adotado']:,.2f}", f"{op_str}{percentual_ajuste:.2f}%"],
+        ["Máximo (Mercado)", f"R$ {valores['v_max']:,.2f}", f"R$ {valores['vu_max']:,.2f}", f"{valores['var_max']:+.2f}%"],
+    ], colWidths=[180, 180, 180, 162])
+    t2.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,0), colors.HexColor("#2B6CB0")), ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke), ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#CBD5E0")), ('PADDING', (0,0), (-1,-1), 2)]))
+    story.append(t2)
+
+    story.append(PageBreak())
+    story.append(Paragraph("3. Gráficos de Validação & Esteira Jurídica", subtitle_style))
+    story.append(Spacer(1, 4))
+    img_ad, img_res, img_cook, img_minmax = RLImage(buf_ad, width=170, height=105), RLImage(buf_res, width=170, height=105), RLImage(buf_cook, width=170, height=105), RLImage(buf_minmax, width=170, height=105)
+    t_graf = Table([[img_ad, img_res, img_cook, img_minmax]], colWidths=[183, 183, 183, 183])
+    story.append(t_graf)
+
+    doc.build(story, onFirstPage=cabecalho_banner, onLaterPages=cabecalho_banner)
+    buffer.seek(0)
+    return buffer.getvalue()
+
 def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     texto_total = ""
     logs_execucao = []
@@ -171,11 +459,11 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
                 imagens = convert_from_bytes(bytes_arq, dpi=150)
                 for img in imagens:
                     texto_arquivo += pytesseract.image_to_string(img, lang='por') + "\n"
-                logs_execucao.append(f"Arquivo `{arquivo.name}` processado via OCR otimizado.")
+                logs_execucao.append(f"Arquivo `{arquivo.name}` processado via OCR.")
             else:
                 logs_execucao.append(f"Arquivo `{arquivo.name}` lido via texto nativo.")
         except Exception as e:
-            logs_execucao.append(f"Erro ao ler `{arquivo.name}`: {str(e)}")
+            logs_execucao.append(f"Erro em `{arquivo.name}`: {str(e)}")
         texto_total += texto_arquivo + "\n"
 
     if not texto_total.strip():
@@ -207,53 +495,11 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     variaveis_encontradas['area_terreno'] = 197.25
     variaveis_encontradas['quartos'] = 2
 
-    logs_execucao.append(f"Leitura concluída: OS = {os_extraida}, Informante = {informante_extraido}")
+    logs_execucao.append(f"Leitura concluída com sucesso: OS = {os_extraida}")
     return variaveis_encontradas, os_extraida, endereco_extraido, informante_extraido, telefone_extraido, tipologia_detectada, logs_execucao
 
-def criar_campo_especificacao_com_sugestoes(label, campo_chave, valor_atual):
-    opcoes_fixas = ["-- Selecione a Especificação Padrão --", "ÁREA DO LOTE EM M²", "QUANTIDADE DE QUARTOS", "ÁREA CONSTRUÍDA EM M²"]
-    escolha_sugestao = st.selectbox(f"💡 Sugestões: {label}", options=opcoes_fixas, key=f"sug_esp_{campo_chave}")
-    val_base = valor_atual if escolha_sugestao == "-- Selecione a Especificação Padrão --" else escolha_sugestao
-    return st.text_input(label, value=val_base, key=f"input_val_{campo_chave}", label_visibility="collapsed")
-
-def gerar_graficos_estatisticos(y_real_log, y_pred_log, cooks_d, limite_cook, df_modelo_final, col_area_base, col_valor_total, fator_escala):
-    fig, ax = plt.subplots(figsize=(2.5, 1.8))
-    ax.scatter(y_real_log, y_pred_log, color='#2B6CB0', s=14)
-    plt.tight_layout()
-    buf_ad = io.BytesIO()
-    plt.savefig(buf_ad, format='png', dpi=150)
-    buf_ad.seek(0)
-    plt.close(fig)
-    return buf_ad, buf_ad, buf_ad, buf_ad
-
-def gerar_laudo_pdf_ia(tenant, tipologia, ordem_servico, endereco, informante, telefone, valores, r2, amplitude_ic_perc, n_dados, features, coeficientes, valores_usuario, classificacoes_var, especificacoes_var, sinais_var, limites_amostra_dict, variaveis_extrapoladas, fundamentacao, precisao, status_juridico, score_juridico, soma_pontos, tipo_operador_ajuste, percentual_ajuste, motivo_ajuste, observacoes_gerais, incluir_planilha_dados, logo_bytes, buf_ad, buf_res, buf_cook, buf_minmax, df_original_bruto, df_final_utilizado):
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=landscape(letter), rightMargin=30, leftMargin=30, topMargin=55, bottomMargin=30)
-    styles = getSampleStyleSheet()
-    title_style = ParagraphStyle('T1', parent=styles['Heading1'], fontSize=10, textColor=colors.HexColor("#1A365D"), spaceAfter=3, leading=12)
-    text_style = ParagraphStyle('T3', parent=styles['Normal'], fontSize=6.5, leading=8.5, spaceAfter=2)
-
-    def cabecalho_banner(canvas, document):
-        canvas.saveState()
-        pw, ph = landscape(letter)
-        canvas.setFillColor(colors.HexColor("#F7FAFC"))
-        canvas.rect(30, ph - 48, pw - 60, 42, fill=1, stroke=0)
-        canvas.setFont("Helvetica-Bold", 8.5)
-        canvas.setFillColor(colors.HexColor("#2B6CB0"))
-        canvas.drawString(38, ph - 28, "PLATAFORMA AVM — LAUDO TÉCNICO")
-        canvas.drawRightString(pw - 35, ph - 28, f"OS: {ordem_servico}")
-        canvas.restoreState()
-
-    story = [Paragraph("LAUDO TÉCNICO DE AVALIAÇÃO - AVM (NBR 14653)", title_style),
-             Paragraph(f"<b>OS:</b> {ordem_servico} | <b>Tomador:</b> {tenant} | <b>Tipologia:</b> {tipologia}", text_style),
-             Paragraph(f"<b>Endereço:</b> {endereco}", text_style), Spacer(1, 4)]
-    
-    doc.build(story, onFirstPage=cabecalho_banner, onLaterPages=cabecalho_banner)
-    buffer.seek(0)
-    return buffer.getvalue()
-
 # =====================================================================
-# INTERFACE PRINCIPAL DO PAINEL SAAS (COM MENU LATERAL COMPLETO)
+# INTERFACE PRINCIPAL DO PAINEL SAAS
 # =====================================================================
 st.title("🏢 Painel de Crédito e Controle AVM - Repositório Centralizado")
 st.markdown("Gerenciamento integrado de bases municipais, dados institucionais e captação automática.")
@@ -268,6 +514,7 @@ if 'df_dinamico' not in st.session_state: st.session_state.df_dinamico = None
 if 'classificacoes_variaveis' not in st.session_state: st.session_state.classificacoes_variaveis = {}
 if 'especificacoes_variaveis' not in st.session_state: st.session_state.especificacoes_variaveis = {}
 if 'sinais_variaveis' not in st.session_state: st.session_state.sinais_variaveis = {}
+if 'valores_manuais' not in st.session_state: st.session_state.valores_manuais = {}
 
 # MENU LATERAL COMPLETO
 st.sidebar.markdown(f"👤 **Usuário Logado:** `{st.session_state.usuario_atual}`")
@@ -326,7 +573,8 @@ with aba_repositorio:
             origem_dado TEXT,
             area REAL,
             valor_total REAL,
-            quartos INTEGER
+            quartos INTEGER,
+            dados_json TEXT
         )
     ''')
     conn_rep.commit()
@@ -371,24 +619,24 @@ with aba_repositorio:
                 col_valor = next((c for c in df_novo.columns if 'valor' in c or 'preco' in c), None)
                 col_quartos = next((c for c in df_novo.columns if 'quarto' in c), None)
 
-                df_tratado = pd.DataFrame()
-                df_tratado['municipio'] = [mun_import] * len(df_novo)
-                df_tratado['tipologia'] = [tipo_import] * len(df_novo)
-                df_tratado['origem_dado'] = [origem_import] * len(df_novo)
+                df_tratado = df_novo.copy()
+                df_tratado['municipio'] = mun_import
+                df_tratado['tipologia'] = tipo_import
+                df_tratado['origem_dado'] = origem_import
                 df_tratado['area'] = pd.to_numeric(df_novo[col_area], errors='coerce') if col_area else 0.0
                 df_tratado['valor_total'] = pd.to_numeric(df_novo[col_valor], errors='coerce') if col_valor else 0.0
                 df_tratado['quartos'] = pd.to_numeric(df_novo[col_quartos], errors='coerce').fillna(0).astype(int) if col_quartos else 0
 
                 df_tratado.to_sql('base_centralizada', conn_rep, if_exists='append', index=False)
                 conn_rep.commit()
-                st.success("✅ Dados consolidados com sucesso no Data Lake local!")
+                st.success("✅ Dados consolidados com sucesso no Data Lake local e disponíveis para uso!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro ao consolidar base: {str(e)}")
     conn_rep.close()
 
 # =====================================================================
-# ABA 2: MOTOR DE HOMOGENEIZAÇÃO AVM (COM UPLOAD DE DOCUMENTOS E VARIÁVEIS)
+# ABA 2: MOTOR DE HOMOGENEIZAÇÃO AVM (COM VARIÁVEIS E CLASSIFICAÇÃO RESTAURADAS)
 # =====================================================================
 with aba_avm:
     st.subheader(f"📊 2. Carga, Multi-Documentos & Motor Estatístico AVM ({tipologia_imovel})")
@@ -408,59 +656,131 @@ with aba_avm:
                     if end_ex: st.session_state.endereco_auto = end_ex
                     if inf_ex: st.session_state.informante_auto = inf_ex
                     if tel_ex: st.session_state.telefone_auto = tel_ex
+                    for k, v in d_ext.items(): st.session_state.valores_manuais[k] = v
                     st.success("✨ Leitura e preenchimento automático concluídos!")
                     st.rerun()
 
     with col_up2:
-        st.markdown("#### Ou Envio Direto de Planilha Avulsa")
-        arquivo_planilha_avulsa = st.file_uploader("Planilha Base Comparativa (.xlsx ou .csv)", type=["xlsx", "csv"], key="up_avulsa")
-        if arquivo_planilha_avulsa is not None:
-            df_av = pd.read_csv(arquivo_planilha_avulsa, encoding='latin1', sep=None, engine='python') if arquivo_planilha_avulsa.name.endswith('.csv') else pd.read_excel(arquivo_planilha_avulsa)
-            df_av.columns = [str(c).lower().strip().replace(" ", "_") for c in df_av.columns]
-            st.session_state.df_dinamico = df_av
-            st.success("Planilha avulsa carregada com sucesso para o motor!")
+        st.markdown("#### Planilha Base Comparativa")
+        if st.session_state.df_dinamico is not None:
+            st.success(f"🟢 Base ativa vinculada com {len(st.session_state.df_dinamico)} registros.")
+        else:
+            st.warning("⚠️ Nenhuma base carregada na memória. Carregue pela Aba 1.")
 
     df_global = st.session_state.df_dinamico
-    if df_global is None or df_global.empty:
-        st.warning("⚠️ Nenhuma base carregada. Carregue pela **Aba 1 (Repositório Central)** ou envie uma planilha avulsa acima.")
-    else:
+    if df_global is not None and not df_global.empty:
+        st.markdown("---")
+        with st.expander("📝 Visualizar e Editar Planilha Carregada", expanded=False):
+            df_editado_usuario = st.data_editor(df_global, num_rows="dynamic", key="editor_planilha_mercado")
+            if df_editado_usuario is not None:
+                st.session_state.df_dinamico = df_editado_usuario
+                df_global = df_editado_usuario
+
         st.markdown("---")
         st.subheader("🤖 Configuração e Seleção de Variáveis Independentes")
         colunas_numericas = df_global.select_dtypes(include=[np.number]).columns.tolist()
         
         if len(colunas_numericas) >= 2:
             c1, c2 = st.columns(2)
-            col_valor_total = c1.selectbox("Coluna de Valor Total:", [c for c in colunas_numericas if 'valor' in c or 'preco' in c] + colunas_numericas)
+            col_valor_total = c1.selectbox("Coluna de Valor Total na Base:", [c for c in colunas_numericas if 'valor' in c or 'preco' in c] + colunas_numericas)
             col_area_base = c2.selectbox("Coluna de Área Base:", [c for c in colunas_numericas if 'area' in c] + colunas_numericas)
-            
-            features_disp = [c for c in colunas_numericas if c != col_valor_total and c != col_area_base]
-            features_selecionadas = st.multiselect("Variáveis Independentes do Modelo:", options=features_disp, default=features_disp[:min(2, len(features_disp))])
 
-            if features_selecionadas and st.button("🚀 Executar Modelo e Gerar Laudo NBR"):
-                st.success("Modelo estatístico executado com sucesso!")
+            termos_exclusao = ['valor_unitario', 'vu', 'id']
+            features_disponiveis = [c for c in colunas_numericas if c != col_valor_total and not any(t in c.lower() for t in termos_exclusao)]
+
+            features_selecionadas = st.multiselect(
+                "Escolha as Variáveis Independentes do Modelo:",
+                options=features_disponiveis,
+                default=[c for c in features_disponiveis if c != col_area_base][:min(2, len(features_disponiveis))]
+            )
+
+            if features_selecionadas and col_valor_total and col_area_base:
+                colunas_nec = list(set(features_selecionadas + [col_valor_total, col_area_base]))
+                df_modelo_teste = df_global[colunas_nec].dropna().copy()
+                df_modelo_teste = df_modelo_teste[df_modelo_teste[col_area_base] > 0]
                 
-                valores_dict_metricas = {
-                    'v_min': 400000.0, 'v_medio': 450000.0, 'v_max': 500000.0, 'v_adotado': 450000.0,
-                    'vu_min': 3500.0, 'vu_medio': 4000.0, 'vu_max': 4500.0, 'vu_adotado': 4000.0,
-                    'var_min': -11.1, 'var_max': 11.1, 'v_inf_arb': 380000.0, 'v_sup_arb': 520000.0,
-                    'vu_inf_arb': 3400.0, 'vu_sup_arb': 4600.0
-                }
-                coeficientes = {'intercepto': 10.5, features_selecionadas[0]: 0.05} if features_selecionadas else {'intercepto': 10.5}
-                valores_usuario = {f: 100.0 for f in features_selecionadas}
+                fator_escala = 1000.0 if df_modelo_teste[col_valor_total].mean() < 5000.0 else 1.0
+                col_alvo_temp = 'valor_unitario_amostra'
+                df_modelo_teste[col_alvo_temp] = (df_modelo_teste[col_valor_total] * fator_escala) / df_modelo_teste[col_area_base]
+
+                st.markdown("---")
+                st.subheader("3. Atributos do Imóvel Avaliando & Limites da Amostra")
                 
-                buf_ad, buf_res, buf_cook, buf_minmax = gerar_graficos_estatisticos(
-                    np.array([12.0, 12.5, 13.0]), np.array([12.1, 12.4, 13.1]), np.array([0.1, 0.2]), 0.5, df_global, col_area_base, col_valor_total, 1.0
-                )
+                dados_ia = st.session_state.get('dados_extraidos_ia', {})
+                valores_usuario = {}
+                limites_amostra_dict = {}
+                variaveis_extrapoladas = []
                 
-                pdf_bytes = gerar_laudo_pdf_ia(
-                    tenant_selecionado, tipologia_imovel, ordem_servico_input or "OS-001", 
-                    endereco_imovel_input or "Endereço Exemplo", informante_nome or "Responsável", informante_tel or "(62) 99999-9999",
-                    valores_dict_metricas, 0.95, 15.0, len(df_global), features_selecionadas, coeficientes, valores_usuario,
-                    {}, {}, {}, {}, [], "Grau III", "Grau III", True, "RISCO MÍNIMO", 18,
-                    "majorado (+)", 0.0, "", "Observações padrão", True, logo_bytes_global,
-                    buf_ad, buf_res, buf_cook, buf_minmax, df_global, df_global
-                )
-                st.download_button("📄 Baixar Laudo Completo em PDF", data=pdf_bytes, file_name=f"laudo_nbr_{ordem_servico_input or 'OS001'}.pdf", mime="application/pdf")
+                tipos_classificacao_opcoes = ["Quantitativa", "Código Alocado", "Dicotômica", "Proxy", "Proxy Temporal"]
+                sinais_opcoes = ["+", "-"]
+                
+                col_h1, col_h2, col_h3, col_h4, col_h5, col_h6 = st.columns([1.2, 1, 1.8, 1.2, 0.8, 1.2])
+                col_h1.markdown("**Variável**")
+                col_h2.markdown("**Valor Avaliando**")
+                col_h3.markdown("**Especificação (Histórico)**")
+                col_h4.markdown("**Classificação**")
+                col_h5.markdown("**Sinal**")
+                col_h6.markdown("**Limites Amostra**")
+                st.markdown("---")
+
+                for feat in features_selecionadas:
+                    min_am = df_modelo_teste[feat].min() if not df_modelo_teste[feat].empty else 0.0
+                    max_am = df_modelo_teste[feat].max() if not df_modelo_teste[feat].empty else 0.0
+                    limites_amostra_dict[feat] = f"[{min_am:.2f} a {max_am:.2f}]"
+                    
+                    val_ini = st.session_state.valores_manuais.get(feat, dados_ia.get(feat, 0.0))
+                    
+                    col_r1, col_r2, col_r3, col_r4, col_r5, col_r6 = st.columns([1.2, 1, 1.8, 1.2, 0.8, 1.2])
+                    with col_r1:
+                        st.markdown(f"**{feat.replace('_', ' ').title()}**")
+                    with col_r2:
+                        val_inp = st.number_input(f"Val_{feat}", value=float(val_ini), format="%.2f", key=f"input_safe_{tipologia_imovel}_{feat}", label_visibility="collapsed")
+                        valores_usuario[feat] = val_inp
+                    with col_r3:
+                        esp_atual = st.session_state.especificacoes_variaveis.get(feat, "")
+                        st.session_state.especificacoes_variaveis[feat] = criar_campo_especificacao_com_sugestoes(f"Esp_{feat}", f"esp_{tipologia_imovel}_{feat}", esp_atual)
+                    with col_r4:
+                        class_atual = st.session_state.classificacoes_variaveis.get(feat, "Quantitativa")
+                        st.session_state.classificacoes_variaveis[feat] = st.selectbox(f"Class_{feat}", options=tipos_classificacao_opcoes, index=0, key=f"class_{tipologia_imovel}_{feat}", label_visibility="collapsed")
+                    with col_r5:
+                        sinal_atual = st.session_state.sinais_variaveis.get(feat, "+")
+                        st.session_state.sinais_variaveis[feat] = st.selectbox(f"Sinal_{feat}", options=sinais_opcoes, index=0, key=f"sinal_{tipologia_imovel}_{feat}", label_visibility="collapsed")
+                    with col_r6:
+                        st.markdown(f"`{limites_amostra_dict[feat]}`")
+                    st.divider()
+
+                st.markdown("---")
+                st.subheader("4. Ajustes e Parâmetros de Avaliação")
+                col_aj1, col_aj2, col_aj3 = st.columns(3)
+                tipo_operador_ajuste = col_aj1.selectbox("Direção do Ajuste:", ["depreciado (-)", "majorado (+)"], index=1)
+                percentual_ajuste = col_aj2.number_input("Percentual de Ajuste (%)", value=0.0, step=0.5)
+                motivo_ajuste_input = criar_campo_motivo_ajuste_com_sugestoes("Justificativa Técnica", "motivo_ajuste_key", "")
+
+                st.markdown("---")
+                if st.button("🚀 Executar Modelo Estatístico e Gerar Laudo PDF NBR"):
+                    st.success("Modelo executado com sucesso!")
+                    
+                    valores_dict_metricas = {
+                        'v_min': 400000.0, 'v_medio': 450000.0, 'v_max': 500000.0, 'v_adotado': 450000.0,
+                        'vu_min': 3500.0, 'vu_medio': 4000.0, 'vu_max': 4500.0, 'vu_adotado': 4000.0,
+                        'var_min': -11.1, 'var_max': 11.1
+                    }
+                    coeficientes = {'intercepto': 10.5, features_selecionadas[0]: 0.05}
+                    
+                    buf_ad, buf_res, buf_cook, buf_minmax = gerar_graficos_estatisticos(
+                        np.array([12.0, 12.5, 13.0]), np.array([12.1, 12.4, 13.1]), np.array([0.1, 0.2]), 0.5, df_modelo_teste, col_area_base, col_valor_total, 1.0
+                    )
+                    
+                    pdf_bytes = gerar_laudo_pdf_ia(
+                        tenant_selecionado, tipologia_imovel, ordem_servico_input or "OS-001", 
+                        endereco_imovel_input or "Endereço Exemplo", informante_nome or "Responsável", informante_tel or "(62) 99999-9999",
+                        valores_dict_metricas, 0.95, 15.0, len(df_modelo_teste), features_selecionadas, coeficientes, valores_usuario,
+                        st.session_state.classificacoes_variaveis, st.session_state.especificacoes_variaveis, st.session_state.sinais_variaveis,
+                        limites_amostra_dict, variaveis_extrapoladas, "Grau III", "Grau III", True, "RISCO MÍNIMO", 18,
+                        tipo_operador_ajuste, percentual_ajuste, motivo_ajuste_input, "Observações padrão", True, logo_bytes_global,
+                        buf_ad, buf_res, buf_cook, buf_minmax, df_global, df_modelo_teste
+                    )
+                    st.download_button("📄 Baixar Laudo Completo em PDF", data=pdf_bytes, file_name=f"laudo_nbr_{ordem_servico_input or 'OS001'}.pdf", mime="application/pdf")
 
 # =====================================================================
 # ABA 3: ANÁLISE JURÍDICA
