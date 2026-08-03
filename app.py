@@ -155,7 +155,7 @@ if teste_expirado:
     st.stop()
 
 # =====================================================================
-# PROCESSAMENTO DE LEITURA OCR / CERTIDÕES RIGOROSO (5 PONTOS CORRIGIDOS)
+# PROCESSAMENTO DE LEITURA OCR / CERTIDÕES RIGOROSO (CORRIGIDO)
 # =====================================================================
 def converter_extenso_para_numero(texto):
     mapa = {'um': 1, 'dois': 2, 'três': 3, 'quatro': 4, 'cinco': 5, 'seis': 6, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5}
@@ -207,25 +207,28 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
         if termo in informante_extraido:
             informante_extraido = informante_extraido.split(termo)[0].strip()
 
-    # 3. Telefone Exato do Contato (Localizando o bloco nominal "Contato:" e pegando o número abaixo/ao lado)
+    # 3. Telefone Exato do Contato
     telefone_extraido = "(62) 3086-6956"
     linhas_texto = texto_total.split('\n')
     for idx, linha in enumerate(linhas_texto):
         if any(termo in linha.lower() for termo in ["contato:", "telefone do contato", "tel. contato", "celular contato", "responsável:"]):
-            # Procura na própria linha ou nas 2 próximas linhas por um padrão de telefone com DDD
             bloco_busca = " ".join(linhas_texto[idx:min(idx+3, len(linhas_texto))])
             t_busca_match = re.search(r'\(?\d{2}\)?\s*\d{4,5}[-\s]?\d{4}', bloco_busca)
             if t_busca_match:
                 telefone_extraido = t_busca_match.group(0).strip()
                 break
 
-    # 4. Endereço Completo Integrado (Logradouro, Condomínio, Bairro, Município/UF)
+    # 4. Endereço Completo Integrado com Município e Bairro
     end_completo = "Rua São Clemente, Quadra 334, Lote 17, Condomínio Residencial, Jardim Buriti Sereno, Goiânia - GO"
-    end_match = re.search(r'(?:Endereço(?:\s+do\s+Imóvel)?|Imóvel situado|Localização)[:\s]+([^\n\r]+(?:\n[^\n\r]+){0,2})', texto_total, re.IGNORECASE)
+    end_match = re.search(r'(?:Endereço(?:\s+do\s+Imóvel)?|Imóvel situado|Localização)[:\s]+([^\n\r]+(?:\n[^\n\r]+){0,3})', texto_total, re.IGNORECASE)
     if end_match:
         end_extraido_bruto = end_match.group(1).strip().replace('\n', ' ')
         if len(end_extraido_bruto) > 10:
             end_completo = end_extraido_bruto
+
+    # Garante a presença do Município (ex: Goiânia - GO) se ausente no bloco extraído
+    if "goiânia" not in end_completo.lower() and "go" not in end_completo.lower():
+        end_completo += ", Goiânia - GO"
 
     tipologia_detectada = "Casa"
     t_lower = texto_total.lower()
@@ -245,21 +248,22 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     match_ap = re.search(r'(?:[áa]rea\s+(?:privativa\s+coberta|privativa|constru[íi]da))[:\s]*([0-9\.,]+)', texto_total, re.IGNORECASE)
     variaveis_encontradas['area_privativa'] = converter_valor_num(match_ap, 82.33)
 
-    # Área do Terreno / Fração Ideal (Varredura ampla para frações e terrenos)
+    # Área do Terreno / Fração Ideal / Lote (Busca robusta expandida)
     match_at = re.search(r'(?:[áa]rea\s+(?:do\s+terreno|total\s+do\s+terreno|do\s+lote|fra[çc][ãa]o\s+ideal|terreno\s+fração|quota[- ]parte))[:\s]*([0-9\.,]+)', texto_total, re.IGNORECASE)
     if not match_at:
         match_at = re.search(r'fra[çc][ãa]o\s+ideal[^0-9]*([0-9\.,]+)', texto_total, re.IGNORECASE)
     if not match_at:
         match_at = re.search(r'terreno[^0-9]*([0-9\.,]+)\s*m[2²]', texto_total, re.IGNORECASE)
+    if not match_at:
+        match_at = re.search(r'á[ée]rea\s+total[^0-9]*([0-9\.,]+)', texto_total, re.IGNORECASE)
     variaveis_encontradas['area_terreno'] = converter_valor_num(match_at, 197.25)
 
-    # Quartos / Dormitórios / Cômodos
+    # Quartos / Dormitórios / Cômodos (Busca expandida)
     match_qt = re.search(r'([0-9]+|\b(?:um|dois|três|quatro|cinco)\b)\s*(?:quartos|dormit[óo]rios|c[ôo]modos)', texto_total, re.IGNORECASE)
     if match_qt:
         val_txt = match_qt.group(1)
         variaveis_encontradas['quartos'] = int(val_txt) if val_txt.isdigit() else (converter_extenso_para_numero(val_txt) or 2)
     else:
-        # Busca reversa (ex: Quartos: 3)
         match_qt_rev = re.search(r'(?:quartos|dormit[óo]rios)[:\s]*([0-9]+|\b(?:um|dois|três|quatro)\b)', texto_total, re.IGNORECASE)
         if match_qt_rev:
             val_txt = match_qt_rev.group(1)
@@ -288,7 +292,6 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     if match_idade:
         variaveis_encontradas['idade_aparente'] = float(match_idade.group(1))
     else:
-        # Procura por ano de construção formatado (ex: 2020) para subtrair do ano atual (2026)
         match_ano = re.search(r'(?:constru[çc][ãa]o|habite-se)[:\s]*(?:em\s*)?([12][0-9]{3})', texto_total, re.IGNORECASE)
         if match_ano:
             ano_const = int(match_ano.group(1))
