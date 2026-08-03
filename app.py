@@ -195,7 +195,7 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
 
     variaveis_encontradas = {}
     
-    # 1. Extração exata da OS: Prioriza explicitamente o campo "Referência"
+    # 1. Extração exata da OS pelo campo Referência ou OS
     ref_match = re.search(r'Refer[êe]ncia[:\s#]*([A-Za-z0-9\.\/\-]+)', texto_total, re.IGNORECASE)
     if not ref_match:
         ref_match = re.search(r'(?:OS|Ordem\s+de\s+Serviço)[:\s#]*([A-Za-z0-9\.\/\-]+)', texto_total, re.IGNORECASE)
@@ -208,7 +208,7 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
         if termo in informante_extraido:
             informante_extraido = informante_extraido.split(termo)[0].strip()
 
-    # 3. Telefone do Contato Exato
+    # 3. Telefone do Contato Exato (Focado estritamente no rótulo do contato)
     tel_match = re.search(r'(?:Telefone\s+do\s+Contato|Tel(?:efone)?\s*(?:do\s+Contato)?|Cel(?:ular)?|Contato)[^\d]*(\(?\d{2}\)?\s*\d{4,5}[-\s]?\d{4})', texto_total, re.IGNORECASE)
     if tel_match:
         telefone_extraido = tel_match.group(1).strip()
@@ -216,7 +216,7 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
         tel_gen = re.search(r'\(?\d{2}\)?\s*\d{4,5}[-\s]?\d{4}', texto_total)
         telefone_extraido = tel_gen.group(0).strip() if tel_gen else "(62) 99614-6622"
 
-    # 4. Endereço Completo (Rua, Quadra, Lote, Casa, Condomínio, Bairro, Município)
+    # 4. Endereço Completo (Captura toda a linha do endereço do imóvel com rua, quadra, lote e bairro)
     end_match = re.search(r'(?:Endereço(?:\s+do\s+Imóvel)?|Imóvel situado)[:\s]+([^\n\r]+)', texto_total, re.IGNORECASE)
     endereco_extraido = end_match.group(1).strip() if end_match else "Rua São Clemente, Quadra 334, Lote 17, Jardim Buriti Sereno, Aparecida de Goiânia - GO"
 
