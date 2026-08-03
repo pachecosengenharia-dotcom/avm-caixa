@@ -155,7 +155,7 @@ if teste_expirado:
     st.stop()
 
 # =====================================================================
-# PROCESSAMENTO DE LEITURA OCR / CERTIDÕES (MOTOR REFINADO)
+# PROCESSAMENTO DE LEITURA OCR / CERTIDÕES (MOTOR OTIMIZADO)
 # =====================================================================
 def converter_extenso_para_numero(texto):
     mapa = {'um': 1, 'dois': 2, 'três': 3, 'quatro': 4, 'cinco': 5, 'seis': 6, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5}
@@ -196,18 +196,15 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
 
     variaveis_encontradas = {}
     
-    # 1. OS ou Referência
     ref_match = re.search(r'(?:OS|Ordem\s+de\s+Serviço|Refer[êe]ncia)[:\s#]*([0-9\.\/\-]+)', texto_total, re.IGNORECASE)
     os_extraida = ref_match.group(1).strip() if ref_match else "7375.3596.000805648/2026.01.01"
 
-    # 2. Informante / Contato
     inf_match = re.search(r'(?:Informante\s*/\s*Contato|Informante|Contato|Respons[áa]vel)[:\s]+([A-Z\u00C0-\u00DD\s]{3,35})', texto_total, re.IGNORECASE)
     informante_extraido = inf_match.group(1).strip() if inf_match else "ROBERT"
     for termo in ["Telefone", "Tel", "Cel", "Email", "Endereço"]:
         if termo in informante_extraido:
             informante_extraido = informante_extraido.split(termo)[0].strip()
 
-    # 3. Telefone Exato do Contato
     telefone_extraido = "(62) 3086-6956"
     linhas_texto = texto_total.split('\n')
     for idx, linha in enumerate(linhas_texto):
@@ -218,7 +215,6 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
                 telefone_extraido = t_busca_match.group(0).strip()
                 break
 
-    # 4. Endereço Completo & Condomínio
     end_completo = "Rua São Clemente, Quadra 334, Lote 17, Condomínio Residencial, Jardim Buriti Sereno, Goiânia - GO"
     end_match = re.search(r'(?:Endereço(?:\s+do\s+Imóvel)?|Imóvel situado|Localização)[:\s]+([^\n\r]+(?:\n[^\n\r]+){0,3})', texto_total, re.IGNORECASE)
     if end_match:
@@ -246,12 +242,10 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
         except:
             return val_padrao
 
-    # Área Privativa
     match_ap = re.search(r'(?:[áa]rea\s+(?:privativa\s+coberta|privativa|constru[íi]da))[:\s]*([0-9\.,]+)', texto_total, re.IGNORECASE)
     variaveis_encontradas['area_privativa'] = converter_valor_num(match_ap, 82.33)
     variaveis_encontradas['area_construida'] = variaveis_encontradas['area_privativa']
 
-    # Área do Terreno (Fração Ideal)
     match_at = re.search(r'fra[çc][ãa]o\s+ideal[^0-9]*([0-9\.,]+)', texto_total, re.IGNORECASE)
     if not match_at:
         match_at = re.search(r'(?:[áa]rea\s+(?:do\s+terreno|total\s+do\s+terreno|do\s+lote|terreno\s+fração|quota[- ]parte))[:\s]*([0-9\.,]+)', texto_total, re.IGNORECASE)
@@ -262,7 +256,6 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     variaveis_encontradas['area_terreno'] = val_terreno_extraido
     variaveis_encontradas['area_do_terreno'] = val_terreno_extraido
 
-    # Quartos
     match_qt = re.search(r'(?:quartos|dormit[óo]rios|c[ôo]modos)[:\s]*([0-9]+|\b(?:um|dois|três|quatro|cinco)\b)', texto_total, re.IGNORECASE)
     if not match_qt:
         match_qt = re.search(r'([0-9]+|\b(?:um|dois|três|quatro|cinco)\b)\s*(?:quartos|dormit[óo]rios|c[ôo]modos)', texto_total, re.IGNORECASE)
@@ -274,7 +267,6 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
         val_q = 2
     variaveis_encontradas['quartos'] = float(val_q)
 
-    # Suítes
     match_st = re.search(r'([0-9]+|\b(?:um|dois|três|quatro)\b)\s*su[íi]tes', texto_total, re.IGNORECASE)
     if match_st:
         val_txt = match_st.group(1)
@@ -282,7 +274,6 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     else:
         variaveis_encontradas['suite'] = 1.0
 
-    # Banheiros
     match_banh = re.search(r'([0-9]+|\b(?:um|dois|três|quatro)\b)\s*banheiros?', texto_total, re.IGNORECASE)
     if match_banh:
         val_txt = match_banh.group(1)
@@ -290,7 +281,6 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     else:
         variaveis_encontradas['banheiros'] = 2.0
 
-    # Idade Aparente
     match_idade = re.search(r'(?:idade\s+aparente|idade\s+do\s+im[óo]vel|ano\s+de\s+constru[çc][ãa]o|vida\s+[úu]til)[:\s]*([0-9]+)', texto_total, re.IGNORECASE)
     if match_idade:
         val_idade = float(match_idade.group(1))
@@ -308,24 +298,19 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     return variaveis_encontradas, os_extraida, end_completo, informante_extraido, telefone_extraido, tipologia_detectada, logs_execucao
 
 def verificar_micronumerosidade_com_classificacao(df, features_selecionadas, classificacoes_var):
-    """
-    Só executa o alerta de micronumerosidade se o usuário tiver classificado 
-    a variável como Dicotômica, Código Alocado ou Proxy Temporal.
-    """
     alertas = []
     n_total = len(df)
     tipos_saneaveis = ["Dicotômica", "Código Alocado", "Proxy Temporal"]
     for feat in features_selecionadas:
         if feat not in df.columns: continue
         tipo_atual = classificacoes_var.get(feat, "Quantitativa")
-        # Se estiver como 'Quantitativa' (padrão), o sistema não faz julgamento de micronumerosidade de categorias
         if tipo_atual not in tipos_saneaveis: continue
         serie = df[feat]
         for val in serie.unique():
             contagem = (serie == val).sum()
             percentual = (contagem / n_total) * 100 if n_total > 0 else 0
             if percentual < 10.0:
-                alertas.append(f"⚠️ **{feat}** (Valor `{val}`): {contagem} dados (**{percentual:.1f}%** - Abaixo do limite de 10%).")
+                alertas.append(f"⚠️ **{feat}** (Valor `{val}`): {contagem} dados (**{percentual:.1f}%** - Abaixo do limite de 10% da amostra — Necessita Saneamento).")
     return alertas
 
 def sanear_micronumerosidade_exato(df, features_selecionadas, classificacoes_var):
@@ -673,7 +658,6 @@ with aba_avm:
             termos_exclusao = ['valor_unitario', 'vu', 'id']
             features_disponiveis = [c for c in colunas_numericas if c != col_valor_total and not any(t in c.lower() for t in termos_exclusao)]
 
-            # Garante que idade_aparente e quartos apareçam por padrão se existirem
             default_features = [c for c in features_disponiveis if c != col_area_base][:min(2, len(features_disponiveis))]
             for feat_obrigatoria in ['idade_aparente', 'quartos']:
                 if feat_obrigatoria in features_disponiveis and feat_obrigatoria not in default_features:
@@ -750,13 +734,19 @@ with aba_avm:
                             if escolha != "-- Digite ou selecione abaixo --":
                                 st.session_state[k_txt] = escolha
 
+                        # OPÇÕES COMPLETAS SOLICITADAS PARA OS ASSISTENTES DE DIGITAÇÃO
                         opcoes_especificacao = [
                             "-- Digite ou selecione abaixo --",
                             "ÁREA DO LOTE EM M²",
                             "QUANTIDADE DE QUARTOS TOTAIS DO IMÓVEL",
                             "ÁREA CONSTRUÍDA COBERTA EM M²",
+                            "QUANTIDADE DE BANHEIROS PRIVATIVOS DO IMÓVEL",
+                            "IDADE APARENTE DO IMÓVEL, EM ANOS",
                             "1 = VENDA; 2 = OFERTA",
-                            "1 = NORMAL/BAIXO; 2 = NORMAL; 3 = NORMAL/ALTO; 4 = ALTO"
+                            "1 = NORMAL/BAIXO; 2 = NORMAL; 3 = NORMAL/ALTO; 4 = ALTO",
+                            "1 = REPAROS IMPORTANTES; 2 = REPAROS SIMPLES; 3 = BOM; 4 = NOVO",
+                            "PV 2016",
+                            "1 - JAN A MAR/2025; 2 - ABR A JUN/2025; 3 - JUL A SET/2025; 4 - OUT A DEZ/2025; 5 - JAN A MAR/2026; 6 - ABR A JUN/2026; 7 - JUL /2026"
                         ]
                         
                         st.selectbox(f"💡 Sugestão {feat}", options=opcoes_especificacao, key=key_esp_sug, on_change=atualizar_esp, label_visibility="collapsed")
@@ -786,7 +776,6 @@ with aba_avm:
                 st.markdown("---")
                 st.subheader("🧹 4. Saneamento de Micronumerosidade & Distância de Cook")
                 
-                # Só verifica micronumerosidade se o usuário classificou alguma variável como Dicotômica, Código Alocado ou Proxy Temporal
                 alertas_micro = verificar_micronumerosidade_com_classificacao(df_modelo_teste, features_selecionadas, st.session_state.classificacoes_variaveis)
                 
                 if alertas_micro:
@@ -798,7 +787,7 @@ with aba_avm:
                         for log_r in logs_rec: st.success(log_r)
                         st.rerun()
                 else:
-                    st.info("ℹ️ Saneamento de micronumerosidade em modo de espera: classifique as variáveis acima como 'Dicotômica', 'Código Alocado' ou 'Proxy Temporal' para que o sistema analise a proporção de 10% das categorias.")
+                    st.info("ℹ️ Saneamento em modo de espera: classifique as variáveis na tabela acima como 'Dicotômica', 'Código Alocado' ou 'Proxy Temporal' para que o sistema analise a proporção mínima de 10% das categorias.")
 
                 df_modelo_final, cooks_d_arr, limite_cook_val = calcular_distancia_cook_e_filtrar(df_modelo_teste, col_alvo_temp, features_selecionadas)
                 st.info(f"📊 **Filtro de Distância de Cook aplicado:** {len(df_modelo_final)} comparáveis válidos mantidos (Limite de corte: {limite_cook_val:.4f}).")
@@ -819,10 +808,13 @@ with aba_avm:
                     if esc != "-- Digite ou selecione uma Justificativa Padrão --":
                         st.session_state[key_mot_txt] = esc
 
+                # OPÇÕES COMPLETAS SOLICITADAS PARA AS JUSTIFICATIVAS E OBSERVAÇÕES
                 opcoes_motivo = [
                     "-- Digite ou selecione uma Justificativa Padrão --",
                     "MAJORADO EM FUNÇÃO DO IMÓVEL POSSUIR GERAÇÃO PRÓPRIA DE ENERGIA.",
-                    "DEPRECIADO EM FUNÇÃO DO IMÓVEL POSSUIR ÁREA CONSTRUÍDA NÃO AVERBADA"
+                    "DEPRECIADO EM FUNÇÃO DO IMÓVEL POSSUIR ÁREA CONSTRUÍDA NÃO AVERBADA (SITUAÇÃO DESVALORIZANTE)",
+                    "DEPRECIADO EM FUNÇÃO DA VARIÁVEL ORIGEM DA INFORMAÇÃO NÃO TER SIDO UTILIZADA NA EQUAÇÃO.",
+                    "MAJORADO EM FUNÇÃO DA VARIÁVEL QUARTOS NÃO TER SIDO UTILIZADA NA EQUAÇÃO."
                 ]
                 st.selectbox("💡 Sugestões de Justificativa Técnica", options=opcoes_motivo, key=key_mot_sug, on_change=atualizar_mot)
                 motivo_ajuste_input = st.text_input("Justificativa Técnica do Ajuste (Editável)", key=key_mot_txt, placeholder="Digite a justificativa técnica")
