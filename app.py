@@ -450,10 +450,10 @@ st.sidebar.markdown("- ✅ BACEN CMN 4.910")
 st.sidebar.markdown("- ✅ ABNT NBR 14653-2")
 
 # =====================================================================
-# ABAS DO SISTEMA
+# ABAS PRINCIPAIS DO SISTEMA (SEPARADAS DE FORMA LIMPA)
 # =====================================================================
 aba_repositorio, aba_avm, aba_juridico, aba_integracao_banco = st.tabs([
-    "🗄️ 1. Repositório Central",
+    "🗄️ 1. Repositório Central & Importação de Planilhas",
     "📊 2. Motor de Homogeneização AVM", 
     "📜 3. Análise Jurídica",
     "🏦 4. Integração Sistema Bancário"
@@ -462,10 +462,10 @@ aba_repositorio, aba_avm, aba_juridico, aba_integracao_banco = st.tabs([
 # =====================================================================
 # ABA 1: REPOSITÓRIO CENTRAL & IMPORTAÇÃO DE PLANILHAS PRÓPRIAS
 # =====================================================================
-aba_repositorio_sub1, aba_repositorio_sub2 = st.tabs(["📂 Consultar Bases do Repositório", "📥 Anexar Planilha Própria / Bancária"])
-
-with aba_repositorio_sub1:
+with aba_repositorio:
     st.subheader("🗄️ Repositório Central de Dados (Data Lake)")
+    st.markdown("Gerencie seu acervo de comparáveis e anexe novas planilhas com identificação automática de todas as variáveis.")
+
     db_path = "repositorio_central_avm.db"
     conn_rep = sqlite3.connect(db_path)
     conn_rep.execute('''
@@ -479,39 +479,9 @@ with aba_repositorio_sub1:
     ''')
     conn_rep.commit()
 
-    col_rep1, col_rep2 = st.columns(2)
-    filtro_mun = col_rep1.text_input("Filtrar por Município:", value="Goiânia")
-    filtro_tipo = col_rep2.selectbox("Filtrar por Tipologia:", ["Todas", "Casa", "Apartamento", "Lote", "Galpão Comercial"])
-
-    query_filtro = "SELECT id, municipio, tipologia, origem_dado FROM base_centralizada WHERE municipio LIKE ?"
-    params = [f"%{filtro_mun}%"]
-    if filtro_tipo != "Todas":
-        query_filtro += " AND tipologia = ?"
-        params.append(filtro_tipo)
-
-    df_repositorio = pd.read_sql_query(query_filtro, conn_rep, params=params)
-
-    if not df_repositorio.empty:
-        st.success(f"📦 {len(df_repositorio)} bases encontradas no repositório central.")
-        st.dataframe(df_repositorio, use_container_width=True)
-        
-        base_selecionada_id = st.selectbox("Selecione o ID da base para carregar no Motor AVM (Aba 2):", df_repositorio['id'].tolist())
-        if st.button("🚀 Carregar Base Selecionada para o Motor AVM"):
-            cursor = conn_rep.cursor()
-            cursor.execute("SELECT dados_json FROM base_centralizada WHERE id = ?", (base_selecionada_id,))
-            res_json = cursor.fetchone()
-            if res_json and res_json[0]:
-                df_carregado = pd.read_json(res_json[0], orient='split')
-                st.session_state.df_dinamico = df_carregado
-                st.success(f"✅ Base ID {base_selecionada_id} carregada com sucesso para o Motor AVM na Aba 2!")
-    else:
-        st.info("ℹ️ Nenhuma base encontrada com este filtro. Cadastre uma planilha na aba ao lado.")
-    conn_rep.close()
-
-with aba_repositorio_sub2:
-    st.subheader("📥 Anexar Planilha Própria (Identificação Automática de Variáveis)")
-    st.markdown("Importe seu arquivo excel ou csv. O sistema lerá **todas** as colunas (numéricas e de texto) e as integrará automaticamente.")
-
+    st.markdown("---")
+    st.markdown("### 📥 Anexar Planilha Própria / Bancária ao Repositório")
+    
     col_i1, col_i2, col_i3 = st.columns(3)
     mun_p = col_i1.text_input("Município do Imóvel:", value="Goiânia", key="mun_p_auto")
     tipo_p = col_i2.selectbox("Tipologia do Imóvel:", ["Casa", "Apartamento", "Lote", "Galpão Comercial"], key="tip_p_auto")
@@ -528,18 +498,45 @@ with aba_repositorio_sub2:
             st.dataframe(df_prop.head(), use_container_width=True)
 
             if st.button("💾 Salvar Planilha Completa no Repositório Central"):
-                conn_rep = sqlite3.connect("repositorio_central_avm.db")
                 json_str = df_prop.to_json(orient='split', index=False)
                 conn_rep.execute('''
                     INSERT INTO base_centralizada (municipio, tipologia, origem_dado, dados_json)
                     VALUES (?, ?, ?, ?)
                 ''', (mun_p, tipo_p, origem_p, json_str))
                 conn_rep.commit()
-                conn_rep.close()
                 st.success("✅ Planilha própria salva e integrada com sucesso no Repositório Central!")
                 st.rerun()
         except Exception as e:
             st.error(f"❌ Erro ao ler planilha: {str(e)}")
+
+    st.markdown("---")
+    st.markdown("### 📂 Bases Cadastradas no Repositório Central")
+    col_rep1, col_rep2 = st.columns(2)
+    filtro_mun = col_rep1.text_input("Filtrar por Município:", value="Goiânia")
+    filtro_tipo = col_rep2.selectbox("Filtrar por Tipologia:", ["Todas", "Casa", "Apartamento", "Lote", "Galpão Comercial"])
+
+    query_filtro = "SELECT id, municipio, tipologia, origem_dado FROM base_centralizada WHERE municipio LIKE ?"
+    params = [f"%{filtro_mun}%"]
+    if filtro_tipo != "Todas":
+        query_filtro += " AND tipologia = ?"
+        params.append(filtro_tipo)
+
+    df_repositorio = pd.read_sql_query(query_filtro, conn_rep, params=params)
+
+    if not df_repositorio.empty:
+        st.dataframe(df_repositorio, use_container_width=True)
+        base_selecionada_id = st.selectbox("Selecione o ID da base para carregar no Motor AVM (Aba 2):", df_repositorio['id'].tolist())
+        if st.button("🚀 Carregar Base Selecionada para o Motor AVM"):
+            cursor = conn_rep.cursor()
+            cursor.execute("SELECT dados_json FROM base_centralizada WHERE id = ?", (base_selecionada_id,))
+            res_json = cursor.fetchone()
+            if res_json and res_json[0]:
+                df_carregado = pd.read_json(res_json[0], orient='split')
+                st.session_state.df_dinamico = df_carregado
+                st.success(f"✅ Base ID {base_selecionada_id} carregada com sucesso para o Motor AVM na Aba 2!")
+    else:
+        st.info("ℹ️ Nenhuma base cadastrada com este filtro.")
+    conn_rep.close()
 
 # =====================================================================
 # ABA 2: MOTOR DE HOMOGENEIZAÇÃO AVM
