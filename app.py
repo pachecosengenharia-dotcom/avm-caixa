@@ -154,7 +154,7 @@ if teste_expirado:
     st.stop()
 
 # =====================================================================
-# PARSER ROBUSTO E PRECISO (CERTIDÕES & ORDEM DE SERVIÇO)
+# PARSER ESTABILIZADO E ROBUSTO (OS, ENDEREÇO E CONTATO)
 # =====================================================================
 def converter_extenso_para_numero(texto):
     mapa = {'um': 1, 'dois': 2, 'três': 3, 'quatro': 4, 'cinco': 5, 'seis': 6, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5}
@@ -195,7 +195,7 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
 
     variaveis_encontradas = {}
     
-    # 1. Extração exata da OS pelo campo Referência ou OS
+    # 1. Extração da OS
     ref_match = re.search(r'Refer[êe]ncia[:\s#]*([A-Za-z0-9\.\/\-]+)', texto_total, re.IGNORECASE)
     if not ref_match:
         ref_match = re.search(r'(?:OS|Ordem\s+de\s+Serviço)[:\s#]*([A-Za-z0-9\.\/\-]+)', texto_total, re.IGNORECASE)
@@ -208,7 +208,7 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
         if termo in informante_extraido:
             informante_extraido = informante_extraido.split(termo)[0].strip()
 
-    # 3. Telefone do Contato Exato (Focado estritamente no rótulo do contato)
+    # 3. Telefone do Contato Direto e Limpo
     tel_match = re.search(r'(?:Telefone\s+do\s+Contato|Tel(?:efone)?\s*(?:do\s+Contato)?|Cel(?:ular)?|Contato)[^\d]*(\(?\d{2}\)?\s*\d{4,5}[-\s]?\d{4})', texto_total, re.IGNORECASE)
     if tel_match:
         telefone_extraido = tel_match.group(1).strip()
@@ -216,7 +216,7 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
         tel_gen = re.search(r'\(?\d{2}\)?\s*\d{4,5}[-\s]?\d{4}', texto_total)
         telefone_extraido = tel_gen.group(0).strip() if tel_gen else "(62) 99614-6622"
 
-    # 4. Endereço Completo (Captura toda a linha do endereço do imóvel com rua, quadra, lote e bairro)
+    # 4. Endereço Completo do Imóvel
     end_match = re.search(r'(?:Endereço(?:\s+do\s+Imóvel)?|Imóvel situado)[:\s]+([^\n\r]+)', texto_total, re.IGNORECASE)
     endereco_extraido = end_match.group(1).strip() if end_match else "Rua São Clemente, Quadra 334, Lote 17, Jardim Buriti Sereno, Aparecida de Goiânia - GO"
 
@@ -234,7 +234,7 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
         except:
             return val_padrao
 
-    # 5. Atributos da certidão (Áreas, Quartos, Suítes, Banheiros)
+    # 5. Atributos numéricos
     match_ap = re.search(r'(?:[áa]rea\s+(?:privativa\s+coberta|privativa|constru[íi]da))[:\s]*([0-9\.,]+)', texto_total, re.IGNORECASE)
     variaveis_encontradas['area_privativa'] = converter_valor_num(match_ap, 82.33)
 
