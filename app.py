@@ -548,7 +548,7 @@ with aba_repositorio:
                 st.success("✅ Dados consolidados com sucesso no Data Lake local e disponíveis para uso!")
                 st.rerun()
             except Exception as e:
-                st.error(f"Erro ao consolidar base: {str(e)}")
+                st.error(f"❌ Erro detalhado ao consolidar base: {str(e)}")
     conn_rep.close()
 
 # =====================================================================
