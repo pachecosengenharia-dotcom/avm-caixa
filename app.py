@@ -195,8 +195,10 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
 
     variaveis_encontradas = {}
     
-    # 1. Extração da OS / Referência
-    ref_match = re.search(r'(?:Refer[êe]ncia|OS|Ordem\s+de\s+Serviço|Ref)[:\s#]*([A-Za-z0-9\.\/\-]+)', texto_total, re.IGNORECASE)
+    # 1. Extração Prioritária do Número da OS pelo campo Referência
+    ref_match = re.search(r'Refer[êe]ncia[:\s#]*([A-Za-z0-9\.\/\-]+)', texto_total, re.IGNORECASE)
+    if not ref_match:
+        ref_match = re.search(r'(?:OS|Ordem\s+de\s+Serviço|Ref)[:\s#]*([A-Za-z0-9\.\/\-]+)', texto_total, re.IGNORECASE)
     os_extraida = ref_match.group(1).strip() if ref_match else "OS-001"
 
     # 2. Informante Limpo
@@ -206,7 +208,7 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
         if termo in informante_extraido:
             informante_extraido = informante_extraido.split(termo)[0].strip()
 
-    # 3. Telefone isolado (Tratamento seguro)
+    # 3. Telefone isolado
     tel_match = re.search(r'(?:Tel|Telefone|Cel|Contato)[:\s]*(\(?\d{2}\)?\s*\d{4,5}[-\s]?\d{4})', texto_total, re.IGNORECASE)
     if tel_match:
         telefone_extraido = tel_match.group(1).strip()
@@ -214,12 +216,9 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
         tel_gen = re.search(r'\(?\d{2}\)?\s*\d{4,5}[-\s]?\d{4}', texto_total)
         telefone_extraido = tel_gen.group(0).strip() if tel_gen else "(62) 99999-9999"
 
-    # 4. Endereço e Bairro
-    bairro_match = re.search(r'(?:Bairro|Setor)[:\s]+([A-Za-z\u00C0-\u00FF\s]+?)(?=\s*-\s*[A-Z]{2}|\s*CEP:|$)', texto_total, re.IGNORECASE)
-    bairro_extraido = bairro_match.group(1).strip() if bairro_match else "Jardim Buriti Sereno"
-
-    end_match = re.search(r'(?:Endereço|Imóvel situado)[:\s]+([^\n]+)', texto_total, re.IGNORECASE)
-    endereco_extraido = f"{end_match.group(1).strip()}, {bairro_extraido}" if end_match else f"Rua Principal, {bairro_extraido}"
+    # 4. Endereço Completo (Rua, Quadra, Lote, Casa, Condomínio, Bairro, Município)
+    end_match = re.search(r'(?:Endereço(?:\s+do\s+Imóvel)?|Imóvel situado)[:\s]+([^\n\.]+)', texto_total, re.IGNORECASE)
+    endereco_extraido = end_match.group(1).strip() if end_match else "Rua São Clemente, Quadra 334, Lote 17, Jardim Buriti Sereno, Goiânia - GO"
 
     tipologia_detectada = "Casa"
     t_lower = texto_total.lower()
@@ -235,14 +234,13 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
         except:
             return val_padrao
 
-    # 5. Atributos numéricos e por extenso (ex: "dois quartos sendo um suíte")
+    # 5. Atributos numéricos e por extenso
     match_ap = re.search(r'(?:[áa]rea\s+(?:privativa\s+coberta|privativa|constru[íi]da))[:\s]*([0-9\.,]+)', texto_total, re.IGNORECASE)
     variaveis_encontradas['area_privativa'] = converter_valor_num(match_ap, 82.33)
 
     match_at = re.search(r'(?:[áa]rea\s+(?:do\s+terreno|total\s+do\s+terreno|do\s+lote|fra[çc][ãa]o))[:\s]*([0-9\.,]+)', texto_total, re.IGNORECASE)
     variaveis_encontradas['area_terreno'] = converter_valor_num(match_at, 197.25)
 
-    # Leitura inteligente de quartos por extenso ou número
     match_qt = re.search(r'([0-9]+|\b(?:um|dois|três|quatro|cinco)\b)\s*(?:quartos|dormit[óo]rios)', texto_total, re.IGNORECASE)
     if match_qt:
         val_txt = match_qt.group(1)
@@ -250,7 +248,6 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     else:
         variaveis_encontradas['quartos'] = 2
 
-    # Leitura inteligente de suítes
     match_st = re.search(r'([0-9]+|\b(?:um|dois|três|quatro)\b)\s*su[íi]tes', texto_total, re.IGNORECASE)
     if match_st:
         val_txt = match_st.group(1)
@@ -258,7 +255,6 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     else:
         variaveis_encontradas['suite'] = 1
 
-    # Leitura inteligente de banheiros totais / sociais
     match_banh = re.search(r'([0-9]+|\b(?:um|dois|três|quatro)\b)\s*banheiros?', texto_total, re.IGNORECASE)
     if match_banh:
         val_txt = match_banh.group(1)
@@ -444,7 +440,7 @@ informante_tel = st.sidebar.text_input("Telefone do Contato", value=st.session_s
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("🖼️ **Logo do Usuário / Cliente (Banner do Laudo)**")
-arquivo_logo = st.sidebar.file_uploader("Insira a imagem da logo (.png ou .jpg)", type=["png", "jpg", "jpeg"], key="uploader_logo_usuario")
+arquivo_logo = st.sidebar.file_uploader("Insira a logo (.png ou .jpg)", type=["png", "jpg", "jpeg"], key="uploader_logo_usuario")
 logo_bytes_global = arquivo_logo.read() if arquivo_logo is not None else None
 if logo_bytes_global:
     st.sidebar.image(logo_bytes_global, caption="Logo Carregada", width=150)
