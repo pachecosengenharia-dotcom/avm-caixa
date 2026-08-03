@@ -155,7 +155,7 @@ if teste_expirado:
     st.stop()
 
 # =====================================================================
-# PROCESSAMENTO DE LEITURA OCR / CERTIDÕES APRIMORADO
+# PROCESSAMENTO DE LEITURA OCR / CERTIDÕES APRIMORADO E ROBUSTO
 # =====================================================================
 def converter_extenso_para_numero(texto):
     mapa = {'um': 1, 'dois': 2, 'três': 3, 'quatro': 4, 'cinco': 5, 'seis': 6, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5}
@@ -196,8 +196,8 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
 
     variaveis_encontradas = {}
     
-    # 1. Ordem de Serviço / Referência
-    ref_match = re.search(r'(?:OS|Ordem\s+de\s+Serviço|Refer[êe]ncia)[:\s#]*([A-Za-z0-9\.\/\-]+)', texto_total, re.IGNORECASE)
+    # 1. Número da OS ou Referência (Exigindo padrão numérico/pontuado)
+    ref_match = re.search(r'(?:OS|Ordem\s+de\s+Serviço|Refer[êe]ncia)[:\s#]*([0-9\.\/\-]+)', texto_total, re.IGNORECASE)
     os_extraida = ref_match.group(1).strip() if ref_match else "7375.3596.000805648/2026.01.01"
 
     # 2. Informante / Contato
@@ -237,12 +237,15 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
         except:
             return val_padrao
 
+    # Captura de Área Privativa
     match_ap = re.search(r'(?:[áa]rea\s+(?:privativa\s+coberta|privativa|constru[íi]da))[:\s]*([0-9\.,]+)', texto_total, re.IGNORECASE)
     variaveis_encontradas['area_privativa'] = converter_valor_num(match_ap, 82.33)
 
-    match_at = re.search(r'(?:[áa]rea\s+(?:do\s+terreno|total\s+do\s+terreno|do\s+lote|fra[çc][ãa]o))[:\s]*([0-9\.,]+)', texto_total, re.IGNORECASE)
+    # Captura de Área do Terreno / Fração Ideal / Lote
+    match_at = re.search(r'(?:[áa]rea\s+(?:do\s+terreno|total\s+do\s+terreno|do\s+lote|fra[çc][ãa]o\s+ideal))[:\s]*([0-9\.,]+)', texto_total, re.IGNORECASE)
     variaveis_encontradas['area_terreno'] = converter_valor_num(match_at, 197.25)
 
+    # Captura de Quartos / Dormitórios
     match_qt = re.search(r'([0-9]+|\b(?:um|dois|três|quatro|cinco)\b)\s*(?:quartos|dormit[óo]rios)', texto_total, re.IGNORECASE)
     if match_qt:
         val_txt = match_qt.group(1)
@@ -250,6 +253,7 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     else:
         variaveis_encontradas['quartos'] = 2
 
+    # Captura de Suítes
     match_st = re.search(r'([0-9]+|\b(?:um|dois|três|quatro)\b)\s*su[íi]tes', texto_total, re.IGNORECASE)
     if match_st:
         val_txt = match_st.group(1)
@@ -257,6 +261,7 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     else:
         variaveis_encontradas['suite'] = 1
 
+    # Captura de Banheiros
     match_banh = re.search(r'([0-9]+|\b(?:um|dois|três|quatro)\b)\s*banheiros?', texto_total, re.IGNORECASE)
     if match_banh:
         val_txt = match_banh.group(1)
@@ -673,10 +678,18 @@ with aba_avm:
                             variaveis_extrapoladas.append(f"{feat} (Valor Avaliando: {val_inp} fora dos limites [{min_am:.2f} - {max_am:.2f}])")
 
                     with col_r3:
-                        # Campo Especificação com total liberdade de edição e sugestões
+                        # Gestão correta e sincronizada do campo de especificação editável via callback
                         key_esp_sug = f"esp_sug_{tipologia_imovel}_{feat}"
                         key_esp_txt = f"esp_txt_{tipologia_imovel}_{feat}"
                         
+                        if key_esp_txt not in st.session_state:
+                            st.session_state[key_esp_txt] = ""
+                            
+                        def atualizar_esp(k_sug=key_esp_sug, k_txt=key_esp_txt):
+                            escolha = st.session_state[k_sug]
+                            if escolha != "-- Digite ou selecione abaixo --":
+                                st.session_state[k_txt] = escolha
+
                         opcoes_especificacao = [
                             "-- Digite ou selecione abaixo --",
                             "ÁREA DO LOTE EM M²",
@@ -686,10 +699,8 @@ with aba_avm:
                             "1 = NORMAL/BAIXO; 2 = NORMAL; 3 = NORMAL/ALTO; 4 = ALTO"
                         ]
                         
-                        sug_escolhida = st.selectbox(f"💡 Sugestão {feat}", options=opcoes_especificacao, key=key_esp_sug, label_visibility="collapsed")
-                        default_val = "" if sug_escolhida == "-- Digite ou selecione abaixo --" else sug_escolhida
-                        
-                        val_digitado = st.text_input(f"Especificação Editável {feat}", value=default_val, key=key_esp_txt, placeholder="Digite a especificação", label_visibility="collapsed")
+                        st.selectbox(f"💡 Sugestão {feat}", options=opcoes_especificacao, key=key_esp_sug, on_change=atualizar_esp, label_visibility="collapsed")
+                        val_digitado = st.text_input(f"Especificação Editável {feat}", key=key_esp_txt, placeholder="Digite a especificação", label_visibility="collapsed")
                         st.session_state.especificacoes_variaveis[feat] = val_digitado
 
                     with col_r4:
@@ -736,17 +747,24 @@ with aba_avm:
                 tipo_operador_ajuste = col_aj1.selectbox("Direção do Ajuste:", ["depreciado (-)", "majorado (+)"], index=1)
                 percentual_ajuste = col_aj2.number_input("Percentual de Ajuste (%)", value=0.0, step=0.5)
                 
-                # Justificativa Técnica Totalmente Editável
+                # Justificativa Técnica Totalmente Editável com Sincronização
                 key_mot_sug = f"motivo_sug_{tipologia_imovel}"
                 key_mot_txt = f"motivo_txt_{tipologia_imovel}"
+                if key_mot_txt not in st.session_state:
+                    st.session_state[key_mot_txt] = ""
+                    
+                def atualizar_mot():
+                    esc = st.session_state[key_mot_sug]
+                    if esc != "-- Digite ou selecione uma Justificativa Padrão --":
+                        st.session_state[key_mot_txt] = esc
+
                 opcoes_motivo = [
                     "-- Digite ou selecione uma Justificativa Padrão --",
                     "MAJORADO EM FUNÇÃO DO IMÓVEL POSSUIR GERAÇÃO PRÓPRIA DE ENERGIA.",
                     "DEPRECIADO EM FUNÇÃO DO IMÓVEL POSSUIR ÁREA CONSTRUÍDA NÃO AVERBADA"
                 ]
-                sug_mot = st.selectbox("💡 Sugestões de Justificativa Técnica", options=opcoes_motivo, key=key_mot_sug)
-                default_mot = "" if sug_mot == "-- Digite ou selecione uma Justificativa Padrão --" else sug_mot
-                motivo_ajuste_input = st.text_input("Justificativa Técnica do Ajuste (Editável)", value=default_mot, key=key_mot_txt, placeholder="Digite a justificativa técnica")
+                st.selectbox("💡 Sugestões de Justificativa Técnica", options=opcoes_motivo, key=key_mot_sug, on_change=atualizar_mot)
+                motivo_ajuste_input = st.text_input("Justificativa Técnica do Ajuste (Editável)", key=key_mot_txt, placeholder="Digite a justificativa técnica")
 
                 st.markdown("---")
                 st.subheader("6. Observações Gerais do Laudo")
