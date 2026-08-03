@@ -154,8 +154,15 @@ if teste_expirado:
     st.stop()
 
 # =====================================================================
-# PARSER ROBUSTO E FLEXÍVEL PARA PDFS E IMAGENS (CERTIDÕES & OS)
+# PARSER AVANÇADO DE TEXTO E LINGUAGEM NATURAL (CERTIDÕES & OS)
 # =====================================================================
+def converter_extenso_para_numero(texto):
+    mapa = {'um': 1, 'dois': 2, 'três': 3, 'quatro': 4, 'cinco': 5, 'seis': 6, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5}
+    for k, v in mapa.items():
+        if k in texto.lower():
+            return v
+    return None
+
 def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     texto_total = ""
     logs_execucao = []
@@ -188,25 +195,26 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
 
     variaveis_encontradas = {}
     
-    # Extração segura e flexível da OS / Referência
+    # 1. Extração da OS / Referência
     ref_match = re.search(r'(?:Refer[êe]ncia|OS|Ordem\s+de\s+Serviço|Ref)[:\s#]*([A-Za-z0-9\.\/\-]+)', texto_total, re.IGNORECASE)
     os_extraida = ref_match.group(1).strip() if ref_match else "OS-001"
 
-    # Extração limpa do Informante
+    # 2. Informante Limpo
     inf_match = re.search(r'(?:Informante|Contato|Respons[áa]vel)[:\s]+([A-Z\u00C0-\u00DD\s]{3,30})', texto_total, re.IGNORECASE)
     informante_extraido = inf_match.group(1).strip() if inf_match else "ROBERT"
-    if "Telefone" in informante_extraido:
-        informante_extraido = informante_extraido.split("Telefone")[0].strip()
+    for termo in ["Telefone", "Tel", "Cel", "Email"]:
+        if termo in informante_extraido:
+            informante_extraido = informante_extraido.split(termo)[0].strip()
 
-    # Extração isolada do Telefone
+    # 3. Telefone isolado (Tratamento seguro)
     tel_match = re.search(r'(?:Tel|Telefone|Cel|Contato)[:\s]*(\(?\d{2}\)?\s*\d{4,5}[-\s]?\d{4})', texto_total, re.IGNORECASE)
-    telefone_extraido = tel_match.group(1).strip() if telefone_extraido = tel_match.group(1).strip() if tel_match else "(62) 99999-9999"
-    if not tel_match:
-        # Busca genérica por padrão de telefone se o rótulo falhar
+    if tel_match:
+        telefone_extraido = tel_match.group(1).strip()
+    else:
         tel_gen = re.search(r'\(?\d{2}\)?\s*\d{4,5}[-\s]?\d{4}', texto_total)
         telefone_extraido = tel_gen.group(0).strip() if tel_gen else "(62) 99999-9999"
 
-    # Endereço e Bairro
+    # 4. Endereço e Bairro
     bairro_match = re.search(r'(?:Bairro|Setor)[:\s]+([A-Za-z\u00C0-\u00FF\s]+?)(?=\s*-\s*[A-Z]{2}|\s*CEP:|$)', texto_total, re.IGNORECASE)
     bairro_extraido = bairro_match.group(1).strip() if bairro_match else "Jardim Buriti Sereno"
 
@@ -219,7 +227,6 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     elif "lote" in t_lower and "terreno" in t_lower: tipologia_detectada = "Lote"
     elif "apartamento" in t_lower: tipologia_detectada = "Apartamento"
 
-    # Conversão numérica tolerante a falhas (Evita ValueError)
     def converter_valor_num(match_obj, val_padrao):
         if not match_obj: return val_padrao
         try:
@@ -228,20 +235,36 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
         except:
             return val_padrao
 
+    # 5. Atributos numéricos e por extenso (ex: "dois quartos sendo um suíte")
     match_ap = re.search(r'(?:[áa]rea\s+(?:privativa\s+coberta|privativa|constru[íi]da))[:\s]*([0-9\.,]+)', texto_total, re.IGNORECASE)
     variaveis_encontradas['area_privativa'] = converter_valor_num(match_ap, 82.33)
 
     match_at = re.search(r'(?:[áa]rea\s+(?:do\s+terreno|total\s+do\s+terreno|do\s+lote|fra[çc][ãa]o))[:\s]*([0-9\.,]+)', texto_total, re.IGNORECASE)
     variaveis_encontradas['area_terreno'] = converter_valor_num(match_at, 197.25)
 
-    match_qt = re.search(r'([0-9]+)\s*(?:quartos|dormit[óo]rios)', texto_total, re.IGNORECASE)
-    variaveis_encontradas['quartos'] = int(match_qt.group(1)) if match_qt else 2
+    # Leitura inteligente de quartos por extenso ou número
+    match_qt = re.search(r'([0-9]+|\b(?:um|dois|três|quatro|cinco)\b)\s*(?:quartos|dormit[óo]rios)', texto_total, re.IGNORECASE)
+    if match_qt:
+        val_txt = match_qt.group(1)
+        variaveis_encontradas['quartos'] = int(val_txt) if val_txt.isdigit() else (converter_extenso_para_numero(val_txt) or 2)
+    else:
+        variaveis_encontradas['quartos'] = 2
 
-    match_st = re.search(r'([0-9]+)\s*su[íi]tes', texto_total, re.IGNORECASE)
-    variaveis_encontradas['suite'] = int(match_st.group(1)) if match_st else 1
+    # Leitura inteligente de suítes
+    match_st = re.search(r'([0-9]+|\b(?:um|dois|três|quatro)\b)\s*su[íi]tes', texto_total, re.IGNORECASE)
+    if match_st:
+        val_txt = match_st.group(1)
+        variaveis_encontradas['suite'] = int(val_txt) if val_txt.isdigit() else (converter_extenso_para_numero(val_txt) or 1)
+    else:
+        variaveis_encontradas['suite'] = 1
 
-    match_banh = re.search(r'([0-9]+)\s*banheiros?', texto_total, re.IGNORECASE)
-    variaveis_encontradas['banheiros'] = int(match_banh.group(1)) if match_banh else 2
+    # Leitura inteligente de banheiros totais / sociais
+    match_banh = re.search(r'([0-9]+|\b(?:um|dois|três|quatro)\b)\s*banheiros?', texto_total, re.IGNORECASE)
+    if match_banh:
+        val_txt = match_banh.group(1)
+        variaveis_encontradas['banheiros'] = int(val_txt) if val_txt.isdigit() else (converter_extenso_para_numero(val_txt) or 2)
+    else:
+        variaveis_encontradas['banheiros'] = 2
 
     logs_execucao.append(f"Leitura concluída com sucesso: OS = {os_extraida}")
     return variaveis_encontradas, os_extraida, endereco_extraido, informante_extraido, telefone_extraido, tipologia_detectada, logs_execucao
@@ -421,7 +444,7 @@ informante_tel = st.sidebar.text_input("Telefone do Contato", value=st.session_s
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("🖼️ **Logo do Usuário / Cliente (Banner do Laudo)**")
-arquivo_logo = st.sidebar.file_uploader("Insira a logo (.png ou .jpg)", type=["png", "jpg", "jpeg"], key="uploader_logo_usuario")
+arquivo_logo = st.sidebar.file_uploader("Insira a imagem da logo (.png ou .jpg)", type=["png", "jpg", "jpeg"], key="uploader_logo_usuario")
 logo_bytes_global = arquivo_logo.read() if arquivo_logo is not None else None
 if logo_bytes_global:
     st.sidebar.image(logo_bytes_global, caption="Logo Carregada", width=150)
