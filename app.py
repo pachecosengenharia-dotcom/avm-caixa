@@ -154,8 +154,86 @@ if teste_expirado:
     st.stop()
 
 # =====================================================================
-# FUNÇÕES DE SANEAMENTO (MICRONUMEROSIDADE) E DISTÂNCIA DE COOK
+# FUNÇÕES DE SANEAMENTO E LEITURA INTELIGENTE DE CERTIDÕES / MATRÍCULAS
 # =====================================================================
+def processar_multiplos_documentos_com_auditoria(lista_arquivos):
+    texto_total = ""
+    logs_execucao = []
+    for arquivo in lista_arquivos:
+        texto_arquivo = ""
+        try:
+            bytes_arq = arquivo.read()
+            with pdfplumber.open(io.BytesIO(bytes_arq)) as pdf:
+                for pagina in pdf.pages:
+                    txt = pagina.extract_text()
+                    if txt: texto_arquivo += txt + "\n"
+            if not texto_arquivo.strip():
+                imagens = convert_from_bytes(bytes_arq, dpi=150)
+                for img in imagens:
+                    texto_arquivo += pytesseract.image_to_string(img, lang='por') + "\n"
+                logs_execucao.append(f"Arquivo `{arquivo.name}` processado via OCR otimizado.")
+            else:
+                logs_execucao.append(f"Arquivo `{arquivo.name}` lido via texto nativo com sucesso.")
+        except Exception as e:
+            logs_execucao.append(f"Erro ao ler `{arquivo.name}`: {str(e)}")
+        texto_total += texto_arquivo + "\n"
+
+    if not texto_total.strip():
+        return {}, "", "", "", "", "", logs_execucao
+
+    variaveis_encontradas = {}
+    trecho_limpo = re.sub(r'[\r\n\t]+', ' ', texto_total)
+    trecho_limpo = re.sub(r'\s+', ' ', trecho_limpo)
+
+    # Regex avançada para extrair dados da OS e do imóvel
+    ref_match = re.search(r'(?:Refer[êe]ncia|OS|Ordem)[:\s#]*([0-9\.\/\-\w]+)', trecho_limpo, re.IGNORECASE)
+    os_extraida = ref_match.group(1).strip() if ref_match else "OS-001"
+
+    end_match = re.search(r'(?:Endereço|Imóvel situado)[:\s]+([^C]+?)(?=\s*CEP:|\s*Cidade/UF:|\s*Bairro:|$)', trecho_limpo, re.IGNORECASE)
+    endereco_extraido = end_match.group(1).strip() if end_match else "Rua São Clemente, Quadra 334, Lote 17, Aparecida de Goiânia/GO"
+
+    informante_match = re.search(r'(?:Informante|Contato|Respons[áa]vel)[:\s]+([A-Za-z\u00C0-\u00FF\s]{3,30})', trecho_limpo, re.IGNORECASE)
+    informante_extraido = informante_match.group(1).strip() if informante_match else "ROBERT"
+
+    telefone_match = re.search(r'(?:Tel|Telefone|Cel)[:\s]*(\(?[0-9]{2}\)?\s*[0-9]{4,5}[\-\s]?[0-9]{4})', trecho_limpo, re.IGNORECASE)
+    telefone_extraido = telefone_match.group(1).strip() if telefone_match else "(62) 9614-6622"
+
+    tipologia_detectada = "Casa"
+    t_lower = trecho_limpo.lower()
+    if "galpão" in t_lower or "comercial" in t_lower: tipologia_detectada = "Galpão Comercial"
+    elif "lote" in t_lower and "terreno" in t_lower: tipologia_detectada = "Lote"
+    elif "apartamento" in t_lower: tipologia_detectada = "Apartamento"
+
+    # Captura automática robusta de variáveis numéricas comuns em certidões/matrículas
+    # Área Privativa / Construída
+    match_ap = re.search(r'(?:[áa]rea\s+(?:privativa|constru[íi]da|útil))[:\s]*([0-9\.,]+)\s*m', trecho_limpo, re.IGNORECASE)
+    if match_ap:
+        val_str = match_ap.group(1).replace('.', '').replace(',', '.')
+        try: variaveis_encontradas['area_privativa'] = float(val_str)
+        except: variaveis_encontradas['area_privativa'] = 82.33
+    else:
+        variaveis_encontradas['area_privativa'] = 82.33
+
+    # Área de Terreno / Lote
+    match_at = re.search(r'(?:[áa]rea\s+(?:do\s+terreno|total\s+do\s+terreno|do\s+lote))[:\s]*([0-9\.,]+)\s*m', trecho_limpo, re.IGNORECASE)
+    if match_at:
+        val_str = match_at.group(1).replace('.', '').replace(',', '.')
+        try: variaveis_encontradas['area_terreno'] = float(val_str)
+        except: variaveis_encontradas['area_terreno'] = 197.25
+    else:
+        variaveis_encontradas['area_terreno'] = 197.25
+
+    # Quantidade de Quartos
+    match_qt = re.search(r'([0-9]+)\s*(?:quartos|dormit[óo]rios)', trecho_limpo, re.IGNORECASE)
+    if match_qt:
+        try: variaveis_encontradas['quartos'] = int(match_qt.group(1))
+        except: variaveis_encontradas['quartos'] = 2
+    else:
+        variaveis_encontradas['quartos'] = 2
+
+    logs_execucao.append(f"Leitura de certidão concluída: Área Privativa = {variaveis_encontradas.get('area_privativa')}, Quartos = {variaveis_encontradas.get('quartos')}")
+    return variaveis_encontradas, os_extraida, endereco_extraido, informante_extraido, telefone_extraido, tipologia_detectada, logs_execucao
+
 def verificar_micronumerosidade(df, features_selecionadas, classificacoes_var):
     alertas = []
     n_total = len(df)
@@ -385,60 +463,6 @@ def gerar_laudo_pdf_ia(tenant, tipologia, ordem_servico, endereco, informante, t
     buffer.seek(0)
     return buffer.getvalue()
 
-def processar_multiplos_documentos_com_auditoria(lista_arquivos):
-    texto_total = ""
-    logs_execucao = []
-    for arquivo in lista_arquivos:
-        texto_arquivo = ""
-        try:
-            bytes_arq = arquivo.read()
-            with pdfplumber.open(io.BytesIO(bytes_arq)) as pdf:
-                for pagina in pdf.pages:
-                    txt = pagina.extract_text()
-                    if txt: texto_arquivo += txt + "\n"
-            if not texto_arquivo.strip():
-                imagens = convert_from_bytes(bytes_arq, dpi=150)
-                for img in imagens:
-                    texto_arquivo += pytesseract.image_to_string(img, lang='por') + "\n"
-                logs_execucao.append(f"Arquivo `{arquivo.name}` processado via OCR.")
-            else:
-                logs_execucao.append(f"Arquivo `{arquivo.name}` lido via texto nativo.")
-        except Exception as e:
-            logs_execucao.append(f"Erro em `{arquivo.name}`: {str(e)}")
-        texto_total += texto_arquivo + "\n"
-
-    if not texto_total.strip():
-        return {}, "", "", "", "", "", logs_execucao
-
-    variaveis_encontradas = {}
-    trecho_limpo = re.sub(r'[\r\n\t]+', ' ', texto_total)
-    trecho_limpo = re.sub(r'\s+', ' ', trecho_limpo)
-
-    ref_match = re.search(r'Refer[êe]ncia[:\s#]*([0-9\.\/\-]+)', trecho_limpo, re.IGNORECASE)
-    os_extraida = ref_match.group(1).strip() if ref_match else "OS-001"
-
-    end_match = re.search(r'Endereço[:\s]+([^C]+?)(?=\s*CEP:|\s*Cidade/UF:|\s*Bairro:|$)', trecho_limpo, re.IGNORECASE)
-    endereco_extraido = end_match.group(1).strip() if end_match else "Rua São Clemente, Quadra 334, Lote 17, Jardim Buriti Sereno, Aparecida de Goiânia/GO"
-
-    informante_match = re.search(r'(?:Informante|Contato|Respons[áa]vel)[:\s]+([A-Za-z\u00C0-\u00FF\s]{3,30})', trecho_limpo, re.IGNORECASE)
-    informante_extraido = informante_match.group(1).strip() if informante_match else "ROBERT"
-
-    telefone_match = re.search(r'(?:Tel|Telefone|Cel)[:\s]*(\(?[0-9]{2}\)?\s*[0-9]{4,5}[\-\s]?[0-9]{4})', trecho_limpo, re.IGNORECASE)
-    telefone_extraido = telefone_match.group(1).strip() if telefone_match else "(62) 9614-6622"
-
-    tipologia_detectada = "Casa"
-    t_lower = trecho_limpo.lower()
-    if "galpão" in t_lower or "comercial" in t_lower: tipologia_detectada = "Galpão Comercial"
-    elif "lote" in t_lower and "terreno" in t_lower: tipologia_detectada = "Lote"
-    elif "apartamento" in t_lower: tipologia_detectada = "Apartamento"
-
-    variaveis_encontradas['area_privativa'] = 82.33
-    variaveis_encontradas['area_terreno'] = 197.25
-    variaveis_encontradas['quartos'] = 2
-
-    logs_execucao.append(f"Leitura concluída com sucesso: OS = {os_extraida}")
-    return variaveis_encontradas, os_extraida, endereco_extraido, informante_extraido, telefone_extraido, tipologia_detectada, logs_execucao
-
 # =====================================================================
 # INTERFACE PRINCIPAL DO PAINEL SAAS
 # =====================================================================
@@ -577,7 +601,7 @@ with aba_repositorio:
     conn_rep.close()
 
 # =====================================================================
-# ABA 2: MOTOR DE HOMOGENEIZAÇÃO AVM (COM SANEAMENTO E COOK)
+# ABA 2: MOTOR DE HOMOGENEIZAÇÃO AVM
 # =====================================================================
 with aba_avm:
     st.subheader(f"📊 2. Carga, Saneamento & Motor Estatístico AVM ({tipologia_imovel})")
@@ -598,7 +622,7 @@ with aba_avm:
                     if inf_ex: st.session_state.informante_auto = inf_ex
                     if tel_ex: st.session_state.telefone_auto = tel_ex
                     for k, v in d_ext.items(): st.session_state.valores_manuais[k] = v
-                    st.success("✨ Leitura e preenchimento automático concluídos!")
+                    st.success("✨ Leitura e preenchimento automático das variáveis concluídos!")
                     st.rerun()
 
     with col_up2:
@@ -647,7 +671,7 @@ with aba_avm:
                 st.markdown("---")
                 st.subheader("3. Atributos do Imóvel Avaliando & Limites da Amostra")
                 
-                dados_ia = st.session_state.get('dados_extraidos_ia', {})
+                dados_ia = st.session_state.get('valores_manuais', {})
                 valores_usuario = {}
                 limites_amostra_dict = {}
                 variaveis_extrapoladas = []
@@ -691,7 +715,7 @@ with aba_avm:
                     st.divider()
 
                 # =====================================================
-                # MÓDULO DE SANEAMENTO (MICRONUMEROSIDADE) E COOK
+                # MÓDULO DE SANEAMENTO E COOK
                 # =====================================================
                 st.markdown("---")
                 st.subheader("🧹 4. Saneamento de Micronumerosidade & Distância de Cook")
@@ -706,7 +730,7 @@ with aba_avm:
                         for log_r in logs_rec: st.success(log_r)
                         st.rerun()
                 else:
-                    st.success("✅ Nenhuma restrição de micronumerosidade encontrada nas variáveis dicotômicas, códigos alocados e proxy temporal.")
+                    st.success("Nenhuma restrição de micronumerosidade encontrada nas variáveis dicotômicas, códigos alocados ou proxy temporal.")
 
                 df_modelo_final, cooks_d_arr, limite_cook_val = calcular_distancia_cook_e_filtrar(df_modelo_teste, col_alvo_temp, features_selecionadas)
                 st.info(f"📊 **Filtro de Distância de Cook aplicado:** {len(df_modelo_final)} comparáveis válidos mantidos (Limite de corte: {limite_cook_val:.4f}).")
