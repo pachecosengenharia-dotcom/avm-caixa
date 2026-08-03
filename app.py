@@ -450,22 +450,22 @@ st.sidebar.markdown("- ✅ BACEN CMN 4.910")
 st.sidebar.markdown("- ✅ ABNT NBR 14653-2")
 
 # =====================================================================
-# ABAS DO SISTEMA (ARQUITETURA CENTRALIZADA)
+# ABAS DO SISTEMA
 # =====================================================================
 aba_repositorio, aba_avm, aba_juridico, aba_integracao_banco = st.tabs([
-    "🗄️ 1. Repositório Central & Mapeador",
+    "🗄️ 1. Repositório Central",
     "📊 2. Motor de Homogeneização AVM", 
     "📜 3. Análise Jurídica",
     "🏦 4. Integração Sistema Bancário"
 ])
 
 # =====================================================================
-# ABA 1: REPOSITÓRIO CENTRAL & MAPEADOR DE FONTES DE DADOS
+# ABA 1: REPOSITÓRIO CENTRAL & IMPORTAÇÃO DE PLANILHAS PRÓPRIAS
 # =====================================================================
-with aba_repositorio:
-    st.subheader("🗄️ Repositório Central de Dados (Data Lake Unificado)")
-    st.markdown("Gerencie seu acervo de comparáveis por **Município** e **Tipologia**, integrando planilhas próprias (com mapeador flexível), remessas bancárias, portais de anúncios e dados de ITBI/Leilões.")
+aba_repositorio_sub1, aba_repositorio_sub2 = st.tabs(["📂 Consultar Bases do Repositório", "📥 Anexar Planilha Própria / Bancária"])
 
+with aba_repositorio_sub1:
+    st.subheader("🗄️ Repositório Central de Dados (Data Lake)")
     db_path = "repositorio_central_avm.db"
     conn_rep = sqlite3.connect(db_path)
     conn_rep.execute('''
@@ -474,20 +474,16 @@ with aba_repositorio:
             municipio TEXT,
             tipologia TEXT,
             origem_dado TEXT,
-            area REAL,
-            valor_total REAL,
-            quartos INTEGER,
             dados_json TEXT
         )
     ''')
     conn_rep.commit()
 
-    # Filtros de visualização do Repositório
     col_rep1, col_rep2 = st.columns(2)
-    filtro_mun = col_rep1.text_input("Filtrar Repositório por Município:", value="Goiânia")
+    filtro_mun = col_rep1.text_input("Filtrar por Município:", value="Goiânia")
     filtro_tipo = col_rep2.selectbox("Filtrar por Tipologia:", ["Todas", "Casa", "Apartamento", "Lote", "Galpão Comercial"])
 
-    query_filtro = "SELECT * FROM base_centralizada WHERE municipio LIKE ?"
+    query_filtro = "SELECT id, municipio, tipologia, origem_dado FROM base_centralizada WHERE municipio LIKE ?"
     params = [f"%{filtro_mun}%"]
     if filtro_tipo != "Todas":
         query_filtro += " AND tipologia = ?"
@@ -496,110 +492,54 @@ with aba_repositorio:
     df_repositorio = pd.read_sql_query(query_filtro, conn_rep, params=params)
 
     if not df_repositorio.empty:
-        st.success(f"📦 {len(df_repositorio)} registros encontrados no repositório central para `{filtro_mun}`.")
+        st.success(f"📦 {len(df_repositorio)} bases encontradas no repositório central.")
         st.dataframe(df_repositorio, use_container_width=True)
         
-        if st.button("🚀 Selecionar e Carregar esta Base Filtrada para o Motor AVM (Aba 2)"):
-            st.session_state.df_dinamico = df_repositorio.rename(columns={'valor_total': 'valor', 'area': 'area_privativa'})
-            st.success("Base vinculada com sucesso ao Motor AVM na Aba 2!")
+        base_selecionada_id = st.selectbox("Selecione o ID da base para carregar no Motor AVM (Aba 2):", df_repositorio['id'].tolist())
+        if st.button("🚀 Carregar Base Selecionada para o Motor AVM"):
+            cursor = conn_rep.cursor()
+            cursor.execute("SELECT dados_json FROM base_centralizada WHERE id = ?", (base_selecionada_id,))
+            res_json = cursor.fetchone()
+            if res_json and res_json[0]:
+                df_carregado = pd.read_json(res_json[0], orient='split')
+                st.session_state.df_dinamico = df_carregado
+                st.success(f"✅ Base ID {base_selecionada_id} carregada com sucesso para o Motor AVM na Aba 2!")
     else:
-        st.info("ℹ️ O repositório central está vazio para este filtro. Adicione dados pelas opções abaixo.")
-
-    st.markdown("---")
-    st.markdown("### 📥 Adicionar Fontes de Dados ao Repositório Central")
-    
-    tipo_entrada = st.radio(
-        "Selecione a origem dos dados que deseja anexar ao repositório:",
-        [
-            "📁 Planilha Própria (Com Mapeador Flexível de Colunas)",
-            "🏦 Remessa Bancária (Layout Padrão)",
-            "🌐 Captação Externa (Portais de Anúncios, ITBI Municipal e Leilões)"
-        ],
-        horizontal=True
-    )
-
-    if "Planilha Própria" in tipo_entrada:
-        st.markdown("#### Mapeamento de Planilha Própria")
-        col_m1, col_m2, col_m3 = st.columns(3)
-        mun_p = col_m1.text_input("Município:", value="Goiânia", key="mun_prop")
-        tipo_p = col_m2.selectbox("Tipologia:", ["Casa", "Apartamento", "Lote", "Galpão Comercial"], key="tip_prop")
-        origem_p = "Planilha Própria"
-
-        arq_prop = st.file_uploader("Envie sua planilha (.xlsx ou .csv)", type=["xlsx", "csv"], key="up_prop")
-        if arq_prop is not None:
-            try:
-                df_prop = pd.read_csv(arq_prop, encoding='latin1', sep=None, engine='python', on_bad_lines='skip') if arq_prop.name.endswith('.csv') else pd.read_excel(arq_prop)
-                cols_p = list(df_prop.columns)
-                
-                mc1, mc2, mc3 = st.columns(3)
-                c_area = mc1.selectbox("Coluna correspondente à Área:", cols_p, key="c_area")
-                c_val = mc2.selectbox("Coluna correspondente ao Valor Total:", cols_p, key="c_val")
-                c_qto = mc3.selectbox("Coluna correspondente a Quartos:", ["Nenhuma"] + cols_p, key="c_qto")
-
-                if st.button("💾 Consolidar Planilha Própria no Repositório"):
-                    df_cons = pd.DataFrame()
-                    df_cons['municipio'] = [mun_p] * len(df_prop)
-                    df_cons['tipologia'] = [tipo_p] * len(df_prop)
-                    df_cons['origem_dado'] = [origem_p] * len(df_prop)
-                    df_cons['area'] = pd.to_numeric(df_prop[c_area], errors='coerce').fillna(0.0)
-                    df_cons['valor_total'] = pd.to_numeric(df_prop[c_val], errors='coerce').fillna(0.0)
-                    df_cons['quartos'] = pd.to_numeric(df_prop[c_qto], errors='coerce').fillna(0).astype(int) if c_qto != "Nenhuma" else 0
-                    df_cons['dados_json'] = "{}"
-
-                    df_cons.to_sql('base_centralizada', conn_rep, if_exists='append', index=False)
-                    conn_rep.commit()
-                    st.success("✅ Planilha própria mapeada e salva no Repositório Central!")
-                    st.rerun()
-            except Exception as e:
-                st.error(f"Erro ao processar planilha: {str(e)}")
-
-    elif "Remessa Bancária" in tipo_entrada:
-        st.markdown("#### Importação de Remessa Bancária")
-        col_b1, col_b2 = st.columns(2)
-        mun_b = col_b1.text_input("Município:", value="Goiânia", key="mun_banco")
-        tipo_b = col_b2.selectbox("Tipologia:", ["Casa", "Apartamento", "Lote", "Galpão Comercial"], key="tip_banco")
-        
-        arq_banco = st.file_uploader("Envie o arquivo de remessa (.xlsx ou .csv)", type=["xlsx", "csv"], key="up_banco")
-        if arq_banco is not None and st.button("💾 Consolidar Remessa Bancária"):
-            try:
-                df_b = pd.read_excel(arq_banco) if arq_banco.name.endswith('.xlsx') else pd.read_csv(arq_banco)
-                df_b.columns = [str(c).lower().strip().replace(" ", "_") for c in df_b.columns]
-                
-                df_b_cons = pd.DataFrame()
-                df_b_cons['municipio'] = [mun_b] * len(df_b)
-                df_b_cons['tipologia'] = [tipo_b] * len(df_b)
-                df_b_cons['origem_dado'] = "Remessa Banco"
-                df_b_cons['area'] = pd.to_numeric(df_b.get('area', df_b.get('area_privativa', 0)), errors='coerce').fillna(0.0)
-                df_b_cons['valor_total'] = pd.to_numeric(df_b.get('valor_total', df_b.get('valor', 0)), errors='coerce').fillna(0.0)
-                df_b_cons['quartos'] = pd.to_numeric(df_b.get('quartos', 0), errors='coerce').fillna(0).astype(int)
-                df_b_cons['dados_json'] = "{}"
-
-                df_b_cons.to_sql('base_centralizada', conn_rep, if_exists='append', index=False)
-                conn_rep.commit()
-                st.success("✅ Remessa bancária incorporada ao Repositório Central!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Erro na remessa: {str(e)}")
-
-    else:
-        st.markdown("#### Varredura e Captação Externa (ITBI / Portais / Leilões)")
-        col_e1, col_e2 = st.columns(2)
-        fonte_ext = col_e1.selectbox("Selecione a Fonte:", ["Portal ITBI Municipal", "Portais de Anúncios Imobiliários", "Leilões Judiciais/Extrajudiciais"])
-        mun_ext = col_e2.text_input("Município Alvo:", value="Goiânia", key="mun_ext")
-        tipo_ext = st.selectbox("Tipologia Alvo:", ["Casa", "Apartamento", "Lote", "Galpão Comercial"], key="tip_ext")
-        
-        if st.button("🌐 Executar Captação e Salvar no Repositório"):
-            with st.spinner(f"Varrendo dados de `{fonte_ext}`..."):
-                df_ext_sim = pd.DataFrame([
-                    {"municipio": mun_ext, "tipologia": tipo_ext, "origem_dado": fonte_ext, "area": 175.0, "valor_total": 435000.0, "quartos": 3, "dados_json": '{"captura": "auto"}'},
-                    {"municipio": mun_ext, "tipologia": tipo_ext, "origem_dado": fonte_ext, "area": 210.0, "valor_total": 510000.0, "quartos": 4, "dados_json": '{"captura": "auto"}'}
-                ])
-                df_ext_sim.to_sql('base_centralizada', conn_rep, if_exists='append', index=False)
-                conn_rep.commit()
-                st.success(f"✅ Dados capturados de `{fonte_ext}` salvos com sucesso no Repositório Central!")
-                st.rerun()
-
+        st.info("ℹ️ Nenhuma base encontrada com este filtro. Cadastre uma planilha na aba ao lado.")
     conn_rep.close()
+
+with aba_repositorio_sub2:
+    st.subheader("📥 Anexar Planilha Própria (Identificação Automática de Variáveis)")
+    st.markdown("Importe seu arquivo excel ou csv. O sistema lerá **todas** as colunas (numéricas e de texto) e as integrará automaticamente.")
+
+    col_i1, col_i2, col_i3 = st.columns(3)
+    mun_p = col_i1.text_input("Município do Imóvel:", value="Goiânia", key="mun_p_auto")
+    tipo_p = col_i2.selectbox("Tipologia do Imóvel:", ["Casa", "Apartamento", "Lote", "Galpão Comercial"], key="tip_p_auto")
+    origem_p = col_i3.selectbox("Origem:", ["Planilha Própria", "Remessa Banco", "Portal de Anúncios", "ITBI / Leilões"])
+
+    arq_prop = st.file_uploader("Selecione a planilha (.xlsx ou .csv)", type=["xlsx", "csv"], key="up_planilha_propria_auto")
+
+    if arq_prop is not None:
+        try:
+            df_prop = pd.read_csv(arq_prop, encoding='latin1', sep=None, engine='python', on_bad_lines='skip') if arq_prop.name.endswith('.csv') else pd.read_excel(arq_prop)
+            df_prop.columns = [str(c).strip().replace(" ", "_").lower() for c in df_prop.columns]
+            
+            st.markdown("#### 📋 Prévia das Variáveis Identificadas Automaticamente (Numéricas e Textuais):")
+            st.dataframe(df_prop.head(), use_container_width=True)
+
+            if st.button("💾 Salvar Planilha Completa no Repositório Central"):
+                conn_rep = sqlite3.connect("repositorio_central_avm.db")
+                json_str = df_prop.to_json(orient='split', index=False)
+                conn_rep.execute('''
+                    INSERT INTO base_centralizada (municipio, tipologia, origem_dado, dados_json)
+                    VALUES (?, ?, ?, ?)
+                ''', (mun_p, tipo_p, origem_p, json_str))
+                conn_rep.commit()
+                conn_rep.close()
+                st.success("✅ Planilha própria salva e integrada com sucesso no Repositório Central!")
+                st.rerun()
+        except Exception as e:
+            st.error(f"❌ Erro ao ler planilha: {str(e)}")
 
 # =====================================================================
 # ABA 2: MOTOR DE HOMOGENEIZAÇÃO AVM
@@ -629,14 +569,14 @@ with aba_avm:
     with col_up2:
         st.markdown("#### Base Comparativa Vinculada")
         if st.session_state.df_dinamico is not None:
-            st.success(f"🟢 Base ativa com {len(st.session_state.df_dinamico)} registros carregados do Repositório Central.")
+            st.success(f"🟢 Base ativa com {len(st.session_state.df_dinamico)} registros e todas as variáveis carregadas.")
         else:
-            st.warning("⚠️ Nenhuma base carregada. Vá na **Aba 1 (Repositório Central)**, filtre os dados desejados e clique em *Selecionar e Carregar*.")
+            st.warning("⚠️ Nenhuma base carregada. Vá na **Aba 1 (Repositório Central)** e carregue uma base.")
 
     df_global = st.session_state.df_dinamico
     if df_global is not None and not df_global.empty:
         st.markdown("---")
-        with st.expander("📝 Visualizar e Editar Planilha Vinculada", expanded=False):
+        with st.expander("📝 Visualizar e Editar Planilha Carregada", expanded=False):
             df_editado_usuario = st.data_editor(df_global, num_rows="dynamic", key="editor_planilha_mercado")
             if df_editado_usuario is not None:
                 st.session_state.df_dinamico = df_editado_usuario
