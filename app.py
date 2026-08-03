@@ -155,7 +155,7 @@ if teste_expirado:
     st.stop()
 
 # =====================================================================
-# PROCESSAMENTO DE LEITURA OCR / CERTIDÕES (BLINDADO)
+# PROCESSAMENTO DE LEITURA OCR / CERTIDÕES (MOTOR REFINADO)
 # =====================================================================
 def converter_extenso_para_numero(texto):
     mapa = {'um': 1, 'dois': 2, 'três': 3, 'quatro': 4, 'cinco': 5, 'seis': 6, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5}
@@ -251,31 +251,31 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     variaveis_encontradas['area_privativa'] = converter_valor_num(match_ap, 82.33)
     variaveis_encontradas['area_construida'] = variaveis_encontradas['area_privativa']
 
-    # Área do Terreno / Fração
-    match_at = re.search(r'(?:[áa]rea\s+(?:do\s+terreno|total\s+do\s+terreno|do\s+lote|fra[çc][ãa]o\s+ideal|terreno\s+fração|quota[- ]parte))[:\s]*([0-9\.,]+)', texto_total, re.IGNORECASE)
+    # =========================================================================
+    # REQUISIÇÃO 1: ÁREA DO TERRENO (PRIORIDADE ABSOLUTA PARA FRAÇÃO IDEAL)
+    # =========================================================================
+    match_at = re.search(r'fra[çc][ãa]o\s+ideal[^0-9]*([0-9\.,]+)', texto_total, re.IGNORECASE)
     if not match_at:
-        match_at = re.search(r'fra[çc][ãa]o\s+ideal[^0-9]*([0-9\.,]+)', texto_total, re.IGNORECASE)
+        match_at = re.search(r'(?:[áa]rea\s+(?:do\s+terreno|total\s+do\s+terreno|do\s+lote|terreno\s+fração|quota[- ]parte))[:\s]*([0-9\.,]+)', texto_total, re.IGNORECASE)
     if not match_at:
         match_at = re.search(r'terreno[^0-9]*([0-9\.,]+)\s*m[2²]', texto_total, re.IGNORECASE)
-    if not match_at:
-        match_at = re.search(r'á[ée]rea\s+total[^0-9]*([0-9\.,]+)', texto_total, re.IGNORECASE)
     
     val_terreno_extraido = converter_valor_num(match_at, 197.25)
     variaveis_encontradas['area_terreno'] = val_terreno_extraido
     variaveis_encontradas['area_do_terreno'] = val_terreno_extraido
 
-    # Quartos
-    match_qt = re.search(r'([0-9]+|\b(?:um|dois|três|quatro|cinco)\b)\s*(?:quartos|dormit[óo]rios|c[ôo]modos)', texto_total, re.IGNORECASE)
+    # =========================================================================
+    # REQUISIÇÃO 2: QUANTIDADE DE QUARTOS (RASTREIO AMPLIADO)
+    # =========================================================================
+    match_qt = re.search(r'(?:quartos|dormit[óo]rios|c[ôo]modos)[:\s]*([0-9]+|\b(?:um|dois|três|quatro|cinco)\b)', texto_total, re.IGNORECASE)
+    if not match_qt:
+        match_qt = re.search(r'([0-9]+|\b(?:um|dois|três|quatro|cinco)\b)\s*(?:quartos|dormit[óo]rios|c[ôo]modos)', texto_total, re.IGNORECASE)
+    
     if match_qt:
         val_txt = match_qt.group(1)
         val_q = int(val_txt) if val_txt.isdigit() else (converter_extenso_para_numero(val_txt) or 2)
     else:
-        match_qt_rev = re.search(r'(?:quartos|dormit[óo]rios)[:\s]*([0-9]+|\b(?:um|dois|três|quatro)\b)', texto_total, re.IGNORECASE)
-        if match_qt_rev:
-            val_txt = match_qt_rev.group(1)
-            val_q = int(val_txt) if val_txt.isdigit() else (converter_extenso_para_numero(val_txt) or 2)
-        else:
-            val_q = 2
+        val_q = 2
     variaveis_encontradas['quartos'] = float(val_q)
 
     # Suítes
@@ -672,7 +672,6 @@ with aba_avm:
             termos_exclusao = ['valor_unitario', 'vu', 'id']
             features_disponiveis = [c for c in colunas_numericas if c != col_valor_total and not any(t in c.lower() for t in termos_exclusao)]
 
-            # Inclui idade_aparente automaticamente na seleção padrão se ela estiver disponível nas colunas
             default_features = [c for c in features_disponiveis if c != col_area_base][:min(2, len(features_disponiveis))]
             if 'idade_aparente' in features_disponiveis and 'idade_aparente' not in default_features:
                 default_features.append('idade_aparente')
