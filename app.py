@@ -163,7 +163,7 @@ if teste_expirado:
     st.stop()
 
 # =====================================================================
-# LEITURA AUTOMÁTICA OCR ORIGINAL COMPLETA E PERFEITA
+# LEITURA AUTOMÁTICA OCR EXAUSTIVA (ÁREAS, FRAÇÃO, QUARTOS, SUÍTES, BANHEIROS, IDADE)
 # =====================================================================
 def converter_extenso_para_numero(texto):
     mapa = {'um': 1, 'dois': 2, 'três': 3, 'quatro': 4, 'cinco': 5, 'seis': 6, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5}
@@ -204,6 +204,7 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
 
     variaveis_encontradas = {}
     
+    # 1. Dados Cadastrais Básicos
     ref_match = re.search(r'(?:OS|Ordem\s+de\s+Serviço|Refer[êe]ncia)[:\s#]*([0-9\.\/\-]+)', texto_total, re.IGNORECASE)
     os_extraida = ref_match.group(1).strip() if ref_match else ""
 
@@ -250,24 +251,35 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
         except:
             return val_padrao
 
+    # 2. Área Privativa Coberta / Construída
     match_ap = re.search(r'(?:[áa]rea\s+(?:privativa\s+coberta|privativa|constru[íi]da))[:\s]*([0-9\.,]+)', texto_total, re.IGNORECASE)
-    variaveis_encontradas['area_privativa'] = converter_valor_num(match_ap, 0.0)
-    variaveis_encontradas['area_construida'] = variaveis_encontradas['area_privativa']
+    if not match_ap:
+        match_ap = re.search(r'constru[íi]da[^0-9]*([0-9\.,]+)\s*m[2²]', texto_total, re.IGNORECASE)
+    val_ap = converter_valor_num(match_ap, 0.0)
+    variaveis_encontradas['area_privativa'] = val_ap
+    variaveis_encontradas['area_construida'] = val_ap
 
-    match_at = re.search(r'fra[çc][ãa]o\s+ideal[^0-9]*([0-9\.,]+)', texto_total, re.IGNORECASE)
-    if not match_at:
-        match_at = re.search(r'(?:[áa]rea\s+(?:do\s+terreno|total\s+do\s+terreno|do\s+lote|terreno\s+fração|quota[- ]parte))[:\s]*([0-9\.,]+)', texto_total, re.IGNORECASE)
+    # 3. Área do Lote / Terreno
+    match_at = re.search(r'(?:[áa]rea\s+(?:do\s+terreno|total\s+do\s+terreno|do\s+lote|terreno))[:\s]*([0-9\.,]+)', texto_total, re.IGNORECASE)
     if not match_at:
         match_at = re.search(r'terreno[^0-9]*([0-9\.,]+)\s*m[2²]', texto_total, re.IGNORECASE)
-    
-    val_terreno_extraido = converter_valor_num(match_at, 0.0)
-    variaveis_encontradas['area_terreno'] = val_terreno_extraido
-    variaveis_encontradas['area_do_terreno'] = val_terreno_extraido
+    val_at = converter_valor_num(match_at, 0.0)
+    variaveis_encontradas['area_terreno'] = val_at
+    variaveis_encontradas['area_do_lote'] = val_at
 
+    # 4. Fração / Fração Terreno
+    match_frac = re.search(r'fra[çc][ãa]o\s+(?:ideal)?[:\s]*([0-9\.,/%]+)', texto_total, re.IGNORECASE)
+    if match_frac:
+        variaveis_encontradas['fracao'] = match_frac.group(1).strip()
+        variaveis_encontradas['fracao_terreno'] = match_frac.group(1).strip()
+    else:
+        variaveis_encontradas['fracao'] = 0.0
+        variaveis_encontradas['fracao_terreno'] = 0.0
+
+    # 5. Número de Quartos
     match_qt = re.search(r'(?:quartos?|dormit[óo]rios?|c[ôo]modos)[:\s]*([0-9]+|\b(?:um|dois|três|quatro|cinco)\b)', texto_total, re.IGNORECASE)
     if not match_qt:
         match_qt = re.search(r'([0-9]+|\b(?:um|dois|três|quatro|cinco)\b)\s*(?:quartos?|dormit[óo]rios?|c[ôo]modos)', texto_total, re.IGNORECASE)
-    
     if match_qt:
         val_txt = match_qt.group(1).lower()
         val_q = float(int(val_txt) if val_txt.isdigit() else (converter_extenso_para_numero(val_txt) or 0.0))
@@ -275,20 +287,25 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
         val_q = 0.0
     variaveis_encontradas['quartos'] = val_q
 
+    # 6. Número de Suítes
     match_st = re.search(r'([0-9]+|\b(?:um|dois|três|quatro)\b)\s*su[íi]tes', texto_total, re.IGNORECASE)
     if match_st:
-        val_txt = match_st.group(1)
-        variaveis_encontradas['suite'] = float(int(val_txt) if val_txt.isdigit() else (converter_extenso_para_numero(val_txt) or 0.0))
+        val_txt = match_st.group(1).lower()
+        val_s = float(int(val_txt) if val_txt.isdigit() else (converter_extenso_para_numero(val_txt) or 0.0))
     else:
-        variaveis_encontradas['suite'] = 0.0
+        val_s = 0.0
+    variaveis_encontradas['suite'] = val_s
 
+    # 7. Número de Banheiros
     match_banh = re.search(r'([0-9]+|\b(?:um|dois|três|quatro)\b)\s*banheiros?', texto_total, re.IGNORECASE)
     if match_banh:
-        val_txt = match_banh.group(1)
-        variaveis_encontradas['banheiros'] = float(int(val_txt) if val_txt.isdigit() else (converter_extenso_para_numero(val_txt) or 0.0))
+        val_txt = match_banh.group(1).lower()
+        val_b = float(int(val_txt) if val_txt.isdigit() else (converter_extenso_para_numero(val_txt) or 0.0))
     else:
-        variaveis_encontradas['banheiros'] = 0.0
+        val_b = 0.0
+    variaveis_encontradas['banheiros'] = val_b
 
+    # 8. Idade Aparente
     match_idade = re.search(r'(?:idade\s+aparente|idade\s+do\s+im[óo]vel|ano\s+de\s+constru[çc][ãa]o|vida\s+[úu]til)[:\s]*([0-9]+)', texto_total, re.IGNORECASE)
     if match_idade:
         val_idade = float(match_idade.group(1))
@@ -300,9 +317,8 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
         else:
             val_idade = 0.0
     variaveis_encontradas['idade_aparente'] = val_idade
-    variaveis_encontradas['idade'] = val_idade
 
-    logs_execucao.append(f"Leitura concluída com sucesso: OS = {os_extraida} | Quartos = {val_q} | Idade = {val_idade}")
+    logs_execucao.append(f"Leitura exaustiva concluída: OS={os_extraida} | Área Priv={val_ap} | Terreno={val_at} | Quartos={val_q} | Suítes={val_s} | Banheiros={val_b} | Idade={val_idade}")
     return variaveis_encontradas, os_extraida, end_completo, informante_extraido, telefone_extraido, tipologia_detectada, logs_execucao
 
 def verificar_micronumerosidade_condicionado(df, features_selecionadas, classificacoes_var):
@@ -449,7 +465,7 @@ st.sidebar.markdown("---")
 tenant_selecionado = st.sidebar.selectbox("Cliente Institucional / Tomador", ["001 - Banco Alfa S.A.", "002 - Imobiliária Local Ltda"])
 tipologia_imovel = st.sidebar.selectbox("Tipologia do Imóvel", ["Casa", "Apartamento", "Lote", "Galpão Comercial"])
 
-# Campos da barra lateral populados automaticamente pelo OCR
+# Campos da barra lateral populados automaticamente pelo OCR exaustivo
 ordem_servico_input = st.sidebar.text_input("Número da Ordem de Serviço (OS)", value=st.session_state.os_auto, key="os_input_key")
 endereco_imovel_input = st.sidebar.text_input("Endereço do Imóvel", value=st.session_state.endereco_auto, key="endereco_input_key")
 informante_nome = st.sidebar.text_input("Nome do Informante / Contato", value=st.session_state.informante_auto, key="informante_input_key")
@@ -624,7 +640,7 @@ with aba_avm:
         if documentos_enviados:
             st.markdown(f"🟢 **{len(documentos_enviados)} documento(s) anexado(s)!**")
             if st.button("🔍 Processar Leitura Automática (OCR)"):
-                with st.spinner("Lendo documentos..."):
+                with st.spinner("Lendo documentos e extraindo valores..."):
                     d_ext, os_ex, end_ex, inf_ex, tel_ex, tip_ex, logs = processar_multiplos_documentos_com_auditoria(documentos_enviados)
                     st.info("📋 **Auditoria Documental:**")
                     for log in logs: st.write(log)
@@ -633,7 +649,7 @@ with aba_avm:
                     if inf_ex: st.session_state.informante_auto = inf_ex
                     if tel_ex: st.session_state.telefone_auto = tel_ex
                     for k, v in d_ext.items(): st.session_state.valores_manuais[k] = v
-                    st.success("✨ Dados preenchidos automaticamente!")
+                    st.success("✨ Valores extraídos e injetados com sucesso nas variáveis do imóvel!")
                     st.rerun()
 
     with col_up2:
@@ -653,17 +669,14 @@ with aba_avm:
         st.subheader("📝 Seleção de Variáveis Independentes Direto na Planilha")
         st.markdown("Ative com um clique na coluna **Usar?** quais variáveis numéricas farão parte dos cálculos estatísticos:")
 
-        # Filtro estrito: Exclui endereço, mas garante que idade_aparente e demais numéricas apareçam
         termos_proibidos = ['endereco', 'informante', 'telefone', 'complemento', 'bairro', 'municipio', 'tipologia', 'origem_dado', 'id']
         colunas_candidatas_planilha = []
         for c in df_global.columns:
             c_lower = str(c).lower().strip()
-            # Garante que colunas numéricas ou específicas como idade_aparente fiquem disponíveis
             if (pd.api.types.is_numeric_dtype(df_global[c]) or 'idade' in c_lower) and not any(termo in c_lower for termo in termos_proibidos):
                 if c not in colunas_candidatas_planilha:
                     colunas_candidatas_planilha.append(c)
 
-        # Garante explicitamente a presença de idade_aparente se estiver na base ou nos padrões
         if 'idade_aparente' in df_global.columns and 'idade_aparente' not in colunas_candidatas_planilha:
             colunas_candidatas_planilha.append('idade_aparente')
 
@@ -737,19 +750,26 @@ with aba_avm:
                 st.markdown("---")
 
                 for feat in features_selecionadas:
-                    min_am = df_modelo_teste[feat].min() if not df_modelo_teste[feat].empty else 0.0
-                    max_am = df_modelo_teste[feat].max() if not df_modelo_teste[feat].empty else 0.0
-                    limites_amostra_dict[feat] = f"[{min_am:.2f} a {max_am:.2f}]"
+                    # Verifica se a feature existe na amostra para calcular limites
+                    if feat in df_modelo_teste.columns:
+                        min_am = df_modelo_teste[feat].min() if not df_modelo_teste[feat].empty else 0.0
+                        max_am = df_modelo_teste[feat].max() if not df_modelo_teste[feat].empty else 0.0
+                        limites_amostra_dict[feat] = f"[{min_am:.2f} a {max_am:.2f}]"
+                    else:
+                        min_am, max_am = 0.0, 0.0
+                        limites_amostra_dict[feat] = "[N/D]"
                     
                     val_sugerido = 0.0
                     feat_limpa = feat.lower().strip()
                     for chave_ocr, val_ocr in dados_ia.items():
                         if chave_ocr.lower() in feat_limpa or feat_limpa in chave_ocr.lower():
-                            val_sugerido = float(val_ocr)
+                            val_sugerido = float(val_ocr) if isinstance(val_ocr, (int, float, np.number)) and not np.isnan(float(val_ocr)) else 0.0
                             break
                     
                     val_ini = st.session_state.valores_manuais.get(feat, val_sugerido if val_sugerido != 0.0 else dados_ia.get(feat, 0.0))
-                    
+                    if not isinstance(val_ini, (int, float, np.number)):
+                        val_ini = 0.0
+
                     col_r1, col_r2, col_r3, col_r4, col_r5, col_r6 = st.columns([1.2, 1, 1.8, 1.2, 0.8, 1.2])
                     with col_r1:
                         st.markdown(f"**{feat.replace('_', ' ').title()}**")
@@ -757,7 +777,7 @@ with aba_avm:
                         val_inp = st.number_input(f"Val_{feat}", value=float(val_ini), format="%.2f", key=f"input_safe_{tipologia_imovel}_{feat}", label_visibility="collapsed")
                         valores_usuario[feat] = val_inp
                         
-                        if val_inp < min_am or val_inp > max_am:
+                        if feat in df_modelo_teste.columns and (val_inp < min_am or val_inp > max_am):
                             variaveis_extrapoladas.append(f"{feat} (Valor Avaliando: {val_inp} fora dos limites [{min_am:.2f} - {max_am:.2f}])")
 
                     with col_r3:
