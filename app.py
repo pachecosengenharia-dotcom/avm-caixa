@@ -22,7 +22,7 @@ import sqlite3
 st.set_page_config(page_title="Plataforma AVM SaaS - Motor de Equações Válidas NBR", page_icon="🏢", layout="wide")
 
 # =====================================================================
-# GERENCIAMENTO DE BANCO DE DADOS DE USUÁRIOS E PERSISTÊNCIA (F5 BLINDADO)
+# GERENCIAMENTO DE BANCO DE DADOS DE USUÁRIOS E PERSISTÊNCIA
 # =====================================================================
 if 'usuarios_cadastrados' not in st.session_state:
     st.session_state.usuarios_cadastrados = {
@@ -60,22 +60,23 @@ if 'autenticado' not in st.session_state:
         st.session_state.usuario_atual = None
 
 # =====================================================================
-# LIMPEZA DE CAMPOS EDITÁVEIS NO F5 (EXCETO VARIÁVEIS NUMÉRICAS)
+# RESET COMPLETO DOS CAMPOS DA ESQUERDA NO F5 (EXCETO VARIÁVEIS NUMÉRICAS)
 # =====================================================================
-if 'f5_limpeza_executada' not in st.session_state:
+if 'f5_limpeza_completa' not in st.session_state:
+    # Limpa estados de inputs da barra lateral e formulários para garantirem valores padrão vazios/limpos no F5
+    chaves_para_limpar = [
+        "os_input_key", "endereco_input_key", "informante_input_key", "telefone_input_key",
+        "mun_p_auto", "tip_p_auto", "uploader_logo_usuario", "uploader_multiplos"
+    ]
+    for k in chaves_para_limpar:
+        if k in st.session_state:
+            del st.session_state[k]
+            
     st.session_state.especificacoes_variaveis = {}
     st.session_state.sinais_variaveis = {}
     st.session_state.classificacoes_variaveis = {}
     st.session_state.valores_manuais = {}
-    # Limpa inputs textuais e selectbox/inputs gerais da barra lateral e formulários
-    keys_para_remover = [
-        "login_email", "login_senha", "cad_nome", "cad_email", "cad_senha",
-        "mun_p_auto", "tip_p_auto", "uploader_logo_usuario", "uploader_multiplos"
-    ]
-    for k in keys_para_remover:
-        if k in st.session_state:
-            del st.session_state[k]
-    st.session_state.f5_limpeza_executada = True
+    st.session_state.f5_limpeza_completa = True
 
 if 'saneamento_executado' not in st.session_state:
     st.session_state.saneamento_executado = False
@@ -173,7 +174,7 @@ if teste_expirado:
     st.stop()
 
 # =====================================================================
-# PROCESSAMENTO DE LEITURA OCR / CERTIDÕES (MOTOR OTIMIZADO - QUARTOS)
+# PROCESSAMENTO DE LEITURA OCR / CERTIDÕES (QUARTOS E ATRIBUTOS)
 # =====================================================================
 def converter_extenso_para_numero(texto):
     mapa = {'um': 1, 'dois': 2, 'três': 3, 'quatro': 4, 'cinco': 5, 'seis': 6, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5}
@@ -215,15 +216,15 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     variaveis_encontradas = {}
     
     ref_match = re.search(r'(?:OS|Ordem\s+de\s+Serviço|Refer[êe]ncia)[:\s#]*([0-9\.\/\-]+)', texto_total, re.IGNORECASE)
-    os_extraida = ref_match.group(1).strip() if ref_match else "7375.3596.000805648/2026.01.01"
+    os_extraida = ref_match.group(1).strip() if ref_match else ""
 
     inf_match = re.search(r'(?:Informante\s*/\s*Contato|Informante|Contato|Respons[áa]vel)[:\s]+([A-Z\u00C0-\u00DD\s]{3,35})', texto_total, re.IGNORECASE)
-    informante_extraido = inf_match.group(1).strip() if inf_match else "ROBERT"
+    informante_extraido = inf_match.group(1).strip() if inf_match else ""
     for termo in ["Telefone", "Tel", "Cel", "Email", "Endereço"]:
         if termo in informante_extraido:
             informante_extraido = informante_extraido.split(termo)[0].strip()
 
-    telefone_extraido = "(62) 3086-6956"
+    telefone_extraido = ""
     linhas_texto = texto_total.split('\n')
     for idx, linha in enumerate(linhas_texto):
         if any(termo in linha.lower() for termo in ["contato:", "telefone do contato", "tel. contato", "celular contato", "responsável:"]):
@@ -233,17 +234,17 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
                 telefone_extraido = t_busca_match.group(0).strip()
                 break
 
-    end_completo = "Rua São Clemente, Quadra 334, Lote 17, Condomínio Residencial, Jardim Buriti Sereno, Goiânia - GO"
+    end_completo = ""
     end_match = re.search(r'(?:Endereço(?:\s+do\s+Imóvel)?|Imóvel situado|Localização)[:\s]+([^\n\r]+(?:\n[^\n\r]+){0,3})', texto_total, re.IGNORECASE)
     if end_match:
         end_extraido_bruto = end_match.group(1).strip().replace('\n', ' ')
-        if len(end_extraido_bruto) > 10:
+        if len(end_extraido_bruto) > 5:
             end_completo = end_extraido_bruto
 
     condo_match = re.search(r'(?:Condom[íi]nio|Loteamento|Residencial)[:\s]+([A-Z\u00C0-\u00DD0-9\s]{3,40})', texto_total, re.IGNORECASE)
     if condo_match:
         nome_condominio = condo_match.group(1).strip()
-        if nome_condominio.lower() not in end_completo.lower():
+        if end_completo and nome_condominio.lower() not in end_completo.lower():
             end_completo += f" - Condomínio {nome_condominio}"
 
     tipologia_detectada = "Casa"
@@ -261,7 +262,7 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
             return val_padrao
 
     match_ap = re.search(r'(?:[áa]rea\s+(?:privativa\s+coberta|privativa|constru[íi]da))[:\s]*([0-9\.,]+)', texto_total, re.IGNORECASE)
-    variaveis_encontradas['area_privativa'] = converter_valor_num(match_ap, 82.33)
+    variaveis_encontradas['area_privativa'] = converter_valor_num(match_ap, 0.0)
     variaveis_encontradas['area_construida'] = variaveis_encontradas['area_privativa']
 
     match_at = re.search(r'fra[çc][ãa]o\s+ideal[^0-9]*([0-9\.,]+)', texto_total, re.IGNORECASE)
@@ -270,35 +271,35 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     if not match_at:
         match_at = re.search(r'terreno[^0-9]*([0-9\.,]+)\s*m[2²]', texto_total, re.IGNORECASE)
     
-    val_terreno_extraido = converter_valor_num(match_at, 197.25)
+    val_terreno_extraido = converter_valor_num(match_at, 0.0)
     variaveis_encontradas['area_terreno'] = val_terreno_extraido
     variaveis_encontradas['area_do_terreno'] = val_terreno_extraido
 
-    # Identificação exata da quantidade de quartos do imóvel
+    # Leitura automatica robusta e correta para quartos
     match_qt = re.search(r'(?:quartos?|dormit[óo]rios?|c[ôo]modos)[:\s]*([0-9]+|\b(?:um|dois|três|quatro|cinco)\b)', texto_total, re.IGNORECASE)
     if not match_qt:
         match_qt = re.search(r'([0-9]+|\b(?:um|dois|três|quatro|cinco)\b)\s*(?:quartos?|dormit[óo]rios?|c[ôo]modos)', texto_total, re.IGNORECASE)
     
     if match_qt:
         val_txt = match_qt.group(1).lower()
-        val_q = int(val_txt) if val_txt.isdigit() else (converter_extenso_para_numero(val_txt) or 3)
+        val_q = float(int(val_txt) if val_txt.isdigit() else (converter_extenso_para_numero(val_txt) or 0.0))
     else:
-        val_q = 3
-    variaveis_encontradas['quartos'] = float(val_q)
+        val_q = 0.0
+    variaveis_encontradas['quartos'] = val_q
 
     match_st = re.search(r'([0-9]+|\b(?:um|dois|três|quatro)\b)\s*su[íi]tes', texto_total, re.IGNORECASE)
     if match_st:
         val_txt = match_st.group(1)
-        variaveis_encontradas['suite'] = float(int(val_txt) if val_txt.isdigit() else (converter_extenso_para_numero(val_txt) or 1))
+        variaveis_encontradas['suite'] = float(int(val_txt) if val_txt.isdigit() else (converter_extenso_para_numero(val_txt) or 0.0))
     else:
-        variaveis_encontradas['suite'] = 1.0
+        variaveis_encontradas['suite'] = 0.0
 
     match_banh = re.search(r'([0-9]+|\b(?:um|dois|três|quatro)\b)\s*banheiros?', texto_total, re.IGNORECASE)
     if match_banh:
         val_txt = match_banh.group(1)
-        variaveis_encontradas['banheiros'] = float(int(val_txt) if val_txt.isdigit() else (converter_extenso_para_numero(val_txt) or 2))
+        variaveis_encontradas['banheiros'] = float(int(val_txt) if val_txt.isdigit() else (converter_extenso_para_numero(val_txt) or 0.0))
     else:
-        variaveis_encontradas['banheiros'] = 2.0
+        variaveis_encontradas['banheiros'] = 0.0
 
     match_idade = re.search(r'(?:idade\s+aparente|idade\s+do\s+im[óo]vel|ano\s+de\s+constru[çc][ãa]o|vida\s+[úu]til)[:\s]*([0-9]+)', texto_total, re.IGNORECASE)
     if match_idade:
@@ -309,11 +310,11 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
             ano_const = int(match_ano.group(1))
             val_idade = float(2026 - ano_const)
         else:
-            val_idade = 5.0
+            val_idade = 0.0
     variaveis_encontradas['idade_aparente'] = val_idade
     variaveis_encontradas['idade'] = val_idade
 
-    logs_execucao.append(f"Leitura concluída com sucesso: OS = {os_extraida} | Quartos = {val_q}")
+    logs_execucao.append(f"Leitura concluída com sucesso: OS = {os_extraida} | Quartos identificados = {val_q}")
     return variaveis_encontradas, os_extraida, end_completo, informante_extraido, telefone_extraido, tipologia_detectada, logs_execucao
 
 def verificar_micronumerosidade_condicionado(df, features_selecionadas, classificacoes_var):
@@ -443,14 +444,9 @@ st.title("🏢 Painel de Crédito e Controle AVM - Repositório Centralizado")
 st.markdown("Gerenciamento integrado de bases municipais, dados institucionais e captação automática.")
 st.divider()
 
-if 'os_auto' not in st.session_state: st.session_state.os_auto = "7375.3596.000805648/2026.01.01"
-if 'endereco_auto' not in st.session_state: st.session_state.endereco_auto = "Rua São Clemente, Quadra 334, Lote 17, Condomínio Residencial, Jardim Buriti Sereno, Goiânia - GO"
-if 'informante_auto' not in st.session_state: st.session_state.informante_auto = "ROBERT"
-if 'telefone_auto' not in st.session_state: st.session_state.telefone_auto = "(62) 3086-6956"
-if 'tipologia_auto' not in st.session_state: st.session_state.tipologia_auto = "Casa"
 if 'df_dinamico' not in st.session_state: st.session_state.df_dinamico = None
 
-# MENU LATERAL COMPLETO
+# MENU LATERAL COMPLETO (Com chaves dinâmicas limpas no F5)
 st.sidebar.markdown(f"👤 **Usuário Logado:** `{st.session_state.usuario_atual}`")
 st.sidebar.markdown(f"📦 **Plano Ativo:** `{plano_atual_str}`")
 
@@ -465,10 +461,11 @@ st.sidebar.markdown("---")
 tenant_selecionado = st.sidebar.selectbox("Cliente Institucional / Tomador", ["001 - Banco Alfa S.A.", "002 - Imobiliária Local Ltda"])
 tipologia_imovel = st.sidebar.selectbox("Tipologia do Imóvel", ["Casa", "Apartamento", "Lote", "Galpão Comercial"])
 
-ordem_servico_input = st.sidebar.text_input("Número da Ordem de Serviço (OS)", value=st.session_state.os_auto)
-endereco_imovel_input = st.sidebar.text_input("Endereço do Imóvel", value=st.session_state.endereco_auto)
-informante_nome = st.sidebar.text_input("Nome do Informante / Contato", value=st.session_state.informante_auto)
-informante_tel = st.sidebar.text_input("Telefone do Contato", value=st.session_state.telefone_auto)
+# Campos da barra lateral sem valores estáticos fixos, garantindo limpeza no F5
+ordem_servico_input = st.sidebar.text_input("Número da Ordem de Serviço (OS)", value=st.session_state.get('os_auto', ''), key="os_input_key")
+endereco_imovel_input = st.sidebar.text_input("Endereço do Imóvel", value=st.session_state.get('endereco_auto', ''), key="endereco_input_key")
+informante_nome = st.sidebar.text_input("Nome do Informante / Contato", value=st.session_state.get('informante_auto', ''), key="informante_input_key")
+informante_tel = st.sidebar.text_input("Telefone do Contato", value=st.session_state.get('telefone_auto', ''), key="telefone_input_key")
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("🖼️ **Logo do Usuário / Cliente (Banner do Laudo)**")
@@ -483,7 +480,7 @@ st.sidebar.markdown("- ✅ BACEN CMN 4.910")
 st.sidebar.markdown("- ✅ ABNT NBR 14653-2")
 
 # =====================================================================
-# ABAS PRINCIPAIS DO SISTEMA (COMPLETAS)
+# ABAS PRINCIPAIS DO SISTEMA
 # =====================================================================
 aba_repositorio, aba_avm, aba_juridico, aba_integracao_banco = st.tabs([
     "🗄️ 1. Repositório Central & Importação de Planilhas",
@@ -643,18 +640,10 @@ with aba_avm:
                     d_ext, os_ex, end_ex, inf_ex, tel_ex, tip_ex, logs = processar_multiplos_documentos_com_auditoria(documentos_enviados)
                     st.info("📋 **Auditoria Documental:**")
                     for log in logs: st.write(log)
-                    if os_ex: 
-                        st.session_state.os_auto = os_ex
-                        ordem_servico_input = os_ex
-                    if end_ex: 
-                        st.session_state.endereco_auto = end_ex
-                        endereco_imovel_input = end_ex
-                    if inf_ex: 
-                        st.session_state.informante_auto = inf_ex
-                        informante_nome = inf_ex
-                    if tel_ex: 
-                        st.session_state.telefone_auto = tel_ex
-                        informante_tel = tel_ex
+                    if os_ex: st.session_state.os_auto = os_ex
+                    if end_ex: st.session_state.endereco_auto = end_ex
+                    if inf_ex: st.session_state.informante_auto = inf_ex
+                    if tel_ex: st.session_state.telefone_auto = tel_ex
                     for k, v in d_ext.items(): st.session_state.valores_manuais[k] = v
                     st.success("✨ Dados preenchidos automaticamente!")
                     st.rerun()
@@ -685,13 +674,18 @@ with aba_avm:
         st.markdown("---")
         st.subheader("🤖 Configuração e Seleção de Variáveis Independentes")
         
-        # Filtro estrito: exclusão de colunas não numéricas e restrição garantida para area_privativa e idade_aparente
-        colunas_candidatas = [c for c in df_global.columns if pd.api.types.is_numeric_dtype(df_global[c])]
+        # Filtro estrito: Somente colunas estritamente numéricas (excluindo string, texto, objetos, endereço, complemento, etc.)
+        colunas_candidatas = []
+        for c in df_global.columns:
+            if pd.api.types.is_numeric_dtype(df_global[c]):
+                # Garante exclusão de colunas que porventura tenham nomes textuais ou IDs irrelevantes
+                if c.lower() not in ['id', 'municipio', 'tipologia', 'origem_dado', 'endereco', 'complemento', 'bairro', 'informante', 'telefone']:
+                    colunas_candidatas.append(c)
 
-        if len(colunas_candidatas) >= 2:
+        if len(colunas_candidatas) >= 1:
             c1, c2 = st.columns(2)
-            col_valor_total = c1.selectbox("Coluna de Valor Total na Base:", [c for c in colunas_candidatas if 'valor' in c.lower() or 'preco' in c.lower()] + colunas_candidatas)
-            col_area_base = c2.selectbox("Coluna de Área Base:", [c for c in colunas_candidatas if 'area' in c.lower()] + colunas_candidatas)
+            col_valor_total = c1.selectbox("Coluna de Valor Total na Base:", [c for c in df_global.columns if 'valor' in c.lower() or 'preco' in c.lower()] + df_global.columns.tolist())
+            col_area_base = c2.selectbox("Coluna de Área Base:", [c for c in df_global.columns if 'area' in c.lower()] + df_global.columns.tolist())
 
             termos_exclusao = ['valor_unitario', 'vu', 'id']
             features_disponiveis = [c for c in colunas_candidatas if c != col_valor_total and c != col_area_base and not any(t in c.lower() for t in termos_exclusao)]
