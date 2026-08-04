@@ -309,7 +309,7 @@ def verificar_micronumerosidade_condicionado(df, features_selecionadas, classifi
         if feat not in df.columns: continue
         tipo_atual = classificacoes_var.get(feat, "Quantitativa")
         if tipo_atual not in tipos_saneaveis: 
-            continue  # Ignora variáveis que não pertençam a estas categorias
+            continue 
         serie = df[feat]
         for val in serie.unique():
             contagem = (serie == val).sum()
@@ -407,10 +407,15 @@ def gerar_laudo_pdf_ia(tenant, tipologia, ordem_servico, endereco, informante, t
         canvas.drawRightString(pw - 35, ph - 28, f"OS: {ordem_servico}")
         canvas.restoreState()
 
-    story = [Paragraph("LAUDO TÉCNICO DE AVALIAÇÃO - AVM (NBR 14653)", title_style),
-             Paragraph(f"<b>OS:</b> {ordem_servico} | <b>Tomador:</b> {tenant} | <b>Tipologia:</b> {tipologia}", text_style),
-             Paragraph(f"<b>Endereço:</b> {endereco}", text_style),
-             Paragraph(f"<b>Observações Gerais:</b> {observacoes_gerais}", text_style), Spacer(1, 4)]
+    story = [
+        Paragraph("LAUDO TÉCNICO DE AVALIAÇÃO - AVM (NBR 14653)", title_style),
+        Paragraph(f"<b>OS:</b> {ordem_servico} | <b>Tomador:</b> {tenant} | <b>Tipologia:</b> {tipologia}", text_style),
+        Paragraph(f"<b>Endereço:</b> {endereco}", text_style),
+        Paragraph(f"<b>Informante:</b> {informante} | <b>Telefone:</b> {telefone}", text_style),
+        Paragraph(f"<b>Justificativa Técnica do Ajuste ({tipo_operador_ajuste} {percentual_ajuste}%):</b> {motivo_ajuste}", text_style),
+        Paragraph(f"<b>Observações Gerais:</b> {observacoes_gerais}", text_style),
+        Spacer(1, 4)
+    ]
     
     doc.build(story, onFirstPage=cabecalho_banner, onLaterPages=cabecalho_banner)
     buffer.seek(0)
@@ -532,7 +537,6 @@ with aba_repositorio:
                 df_prop = pd.read_csv(arq_prop, encoding='latin1', sep=None, engine='python', on_bad_lines='skip') if arq_prop.name.endswith('.csv') else pd.read_excel(arq_prop)
                 df_prop.columns = [str(c).strip().replace(" ", "_").lower() for c in df_prop.columns]
                 
-                # Conversão robusta e segura para colunas numéricas
                 for col in df_prop.columns:
                     if col not in ['municipio', 'tipologia', 'origem_dado', 'endereco', 'data_do_evento', 'informante']:
                         df_prop[col] = pd.to_numeric(df_prop[col].astype(str).str.replace(',', '.'), errors='coerce')
@@ -754,7 +758,7 @@ with aba_avm:
                         key_esp_txt = f"esp_txt_{tipologia_imovel}_{feat}"
                         
                         if key_esp_txt not in st.session_state:
-                            st.session_state[key_esp_txt] = ""
+                            st.session_state[key_esp_txt] = st.session_state.get('especificacoes_variaveis', {}).get(feat, "")
                             
                         def atualizar_esp(k_sug=key_esp_sug, k_txt=key_esp_txt):
                             escolha = st.session_state[k_sug]
@@ -780,10 +784,8 @@ with aba_avm:
                         st.session_state.especificacoes_variaveis[feat] = val_digitado
 
                     with col_r4:
-                        class_atual = st.session_state.classificacoes_variaveis.get(feat, "Quantitativa")
                         st.session_state.classificacoes_variaveis[feat] = st.selectbox(f"Class_{feat}", options=tipos_classificacao_opcoes, index=0, key=f"class_{tipologia_imovel}_{feat}", label_visibility="collapsed")
                     with col_r5:
-                        sinal_atual = st.session_state.sinais_variaveis.get(feat, "+")
                         st.session_state.sinais_variaveis[feat] = st.selectbox(f"Sinal_{feat}", options=sinais_opcoes, index=0, key=f"sinal_{tipologia_imovel}_{feat}", label_visibility="collapsed")
                     with col_r6:
                         st.markdown(f"`{limites_amostra_dict[feat]}`")
@@ -802,7 +804,6 @@ with aba_avm:
                 st.markdown("---")
                 st.subheader("🧹 4. Saneamento de Micronumerosidade & Distância de Cook")
                 
-                # Validação estrita condicionada às categorias solicitadas
                 alertas_micro = verificar_micronumerosidade_condicionado(df_modelo_teste, features_selecionadas, st.session_state.classificacoes_variaveis)
                 
                 if alertas_micro:
