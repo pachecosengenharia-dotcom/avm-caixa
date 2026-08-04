@@ -59,8 +59,17 @@ if 'autenticado' not in st.session_state:
         st.session_state.autenticado = False
         st.session_state.usuario_atual = None
 
-if 'historico_digitacao' not in st.session_state:
-    st.session_state.historico_digitacao = {}
+# =====================================================================
+# LIMPEZA DE CAMPOS EDITÁVEIS AO ATUALIZAR (F5) - EXETO NUMÉRICAS
+# =====================================================================
+if 'f5_limpeza_inicial_executada' not in st.session_state:
+    st.session_state.especificacoes_variaveis = {}
+    st.session_state.sinais_variaveis = {}
+    st.session_state.classificacoes_variaveis = {}
+    st.session_state.f5_limpeza_inicial_executada = True
+
+if 'saneamento_executado' not in st.session_state:
+    st.session_state.saneamento_executado = False
 
 # =====================================================================
 # TELA DE LOGIN E CADASTRO
@@ -256,15 +265,16 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     variaveis_encontradas['area_terreno'] = val_terreno_extraido
     variaveis_encontradas['area_do_terreno'] = val_terreno_extraido
 
-    match_qt = re.search(r'(?:quartos|dormit[óo]rios|c[ôo]modos)[:\s]*([0-9]+|\b(?:um|dois|três|quatro|cinco)\b)', texto_total, re.IGNORECASE)
+    # Leitura automatica refinada e robusta para quantidade de quartos
+    match_qt = re.search(r'(?:quartos?|dormit[óo]rios?|c[ôo]modos)[:\s]*([0-9]+|\b(?:um|dois|três|quatro|cinco)\b)', texto_total, re.IGNORECASE)
     if not match_qt:
-        match_qt = re.search(r'([0-9]+|\b(?:um|dois|três|quatro|cinco)\b)\s*(?:quartos|dormit[óo]rios|c[ôo]modos)', texto_total, re.IGNORECASE)
+        match_qt = re.search(r'([0-9]+|\b(?:um|dois|três|quatro|cinco)\b)\s*(?:quartos?|dormit[óo]rios?|c[ôo]modos)', texto_total, re.IGNORECASE)
     
     if match_qt:
-        val_txt = match_qt.group(1)
-        val_q = int(val_txt) if val_txt.isdigit() else (converter_extenso_para_numero(val_txt) or 2)
+        val_txt = match_qt.group(1).lower()
+        val_q = int(val_txt) if val_txt.isdigit() else (converter_extenso_para_numero(val_txt) or 3)
     else:
-        val_q = 2
+        val_q = 3
     variaveis_encontradas['quartos'] = float(val_q)
 
     match_st = re.search(r'([0-9]+|\b(?:um|dois|três|quatro)\b)\s*su[íi]tes', texto_total, re.IGNORECASE)
@@ -294,7 +304,7 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     variaveis_encontradas['idade_aparente'] = val_idade
     variaveis_encontradas['idade'] = val_idade
 
-    logs_execucao.append(f"Leitura concluída com sucesso: OS = {os_extraida}")
+    logs_execucao.append(f"Leitura concluída com sucesso: OS = {os_extraida} | Quartos identificados = {val_q}")
     return variaveis_encontradas, os_extraida, end_completo, informante_extraido, telefone_extraido, tipologia_detectada, logs_execucao
 
 def verificar_micronumerosidade_condicionado(df, features_selecionadas, classificacoes_var):
@@ -434,9 +444,6 @@ if 'informante_auto' not in st.session_state: st.session_state.informante_auto =
 if 'telefone_auto' not in st.session_state: st.session_state.telefone_auto = "(62) 3086-6956"
 if 'tipologia_auto' not in st.session_state: st.session_state.tipologia_auto = "Casa"
 if 'df_dinamico' not in st.session_state: st.session_state.df_dinamico = None
-if 'classificacoes_variaveis' not in st.session_state: st.session_state.classificacoes_variaveis = {}
-if 'especificacoes_variaveis' not in st.session_state: st.session_state.especificacoes_variaveis = {}
-if 'sinais_variaveis' not in st.session_state: st.session_state.sinais_variaveis = {}
 if 'valores_manuais' not in st.session_state: st.session_state.valores_manuais = {}
 
 # MENU LATERAL COMPLETO
@@ -674,9 +681,8 @@ with aba_avm:
         st.markdown("---")
         st.subheader("🤖 Configuração e Seleção de Variáveis Independentes")
         
-        colunas_candidatas = [c for c in df_global.columns if pd.api.types.is_numeric_dtype(df_global[c]) or df_global[c].notnull().any()]
-        if not colunas_candidatas:
-            colunas_candidatas = df_global.columns.tolist()
+        # Filtragem rigorosa: apenas colunas numéricas (sem colunas de texto/strings na seleção independente)
+        colunas_candidatas = [c for c in df_global.columns if pd.api.types.is_numeric_dtype(df_global[c])]
 
         if len(colunas_candidatas) >= 2:
             c1, c2 = st.columns(2)
@@ -684,15 +690,15 @@ with aba_avm:
             col_area_base = c2.selectbox("Coluna de Área Base:", [c for c in colunas_candidatas if 'area' in c.lower()] + colunas_candidatas)
 
             termos_exclusao = ['valor_unitario', 'vu', 'id']
-            features_disponiveis = [c for c in colunas_candidatas if c != col_valor_total and not any(t in c.lower() for t in termos_exclusao)]
+            features_disponiveis = [c for c in colunas_candidatas if c != col_valor_total and c != col_area_base and not any(t in c.lower() for t in termos_exclusao)]
 
-            default_features = [c for c in features_disponiveis if c != col_area_base][:min(2, len(features_disponiveis))]
+            default_features = features_disponiveis[:min(2, len(features_disponiveis))]
             for feat_obrigatoria in ['idade_aparente', 'idade', 'quartos']:
                 if feat_obrigatoria in features_disponiveis and feat_obrigatoria not in default_features:
                     default_features.append(feat_obrigatoria)
 
             features_selecionadas = st.multiselect(
-                "Escolha as Variáveis Independentes do Modelo:",
+                "Escolha as Variáveis Independentes do Modelo (Apenas Variáveis Numéricas):",
                 options=features_disponiveis,
                 default=default_features
             )
@@ -758,7 +764,7 @@ with aba_avm:
                         key_esp_txt = f"esp_txt_{tipologia_imovel}_{feat}"
                         
                         if key_esp_txt not in st.session_state:
-                            st.session_state[key_esp_txt] = st.session_state.get('especificacoes_variaveis', {}).get(feat, "")
+                            st.session_state[key_esp_txt] = ""
                             
                         def atualizar_esp(k_sug=key_esp_sug, k_txt=key_esp_txt):
                             escolha = st.session_state[k_sug]
@@ -799,7 +805,7 @@ with aba_avm:
                     st.success("✅ Nenhuma extrapolação identificada. Todos os atributos do imóvel avaliando estão dentro dos limites da amostra.")
 
                 # =====================================================
-                # MÓDULO DE SANEAMENTO CONDICIONADO À CLASSIFICAÇÃO
+                # MÓDULO DE SANEAMENTO CONDICIONADO COM BOTÃO ATIVADOR
                 # =====================================================
                 st.markdown("---")
                 st.subheader("🧹 4. Saneamento de Micronumerosidade & Distância de Cook")
@@ -807,15 +813,19 @@ with aba_avm:
                 alertas_micro = verificar_micronumerosidade_condicionado(df_modelo_teste, features_selecionadas, st.session_state.classificacoes_variaveis)
                 
                 if alertas_micro:
-                    st.warning("⚠️ **Alertas de Micronumerosidade detectados (Variáveis Dicotômicas, Códigos Alocados ou Proxy Temporal com < 10%):**")
+                    st.warning("⚠️ **Alertas de Micronumerosidade detectados (Dicotômicas, Códigos Alocados ou Proxy Temporal com < 10%):**")
                     for alerta in alertas_micro:
                         st.markdown(alerta)
-                    if st.button("🧹 Executar Saneamento Automático (Micronumerosidade)"):
-                        df_modelo_teste, logs_rec = sanear_micronumerosidade_exato(df_modelo_teste, features_selecionadas, st.session_state.classificacoes_variaveis)
+                
+                # Botão específico para ativar o saneamento da micronumerosidade
+                if st.button("🎛️ Ativar Saneamento de Micronumerosidade (Dicotômicas, Códigos Alocados e Proxy Temporal)"):
+                    df_modelo_teste, logs_rec = sanear_micronumerosidade_exato(df_modelo_teste, features_selecionadas, st.session_state.classificacoes_variaveis)
+                    st.session_state.saneamento_executado = True
+                    if logs_rec:
                         for log_r in logs_rec: st.success(log_r)
-                        st.rerun()
-                else:
-                    st.info("ℹ️ Saneamento condicionado ativo: classifique as variáveis acima como 'Dicotômica', 'Código Alocado' ou 'Proxy Temporal' para que o sistema valide a proporção mínima de 10% nas respectivas categorias.")
+                        st.success("✅ Saneamento executado com sucesso nas categorias elegíveis!")
+                    else:
+                        st.info("ℹ️ Nenhuma alteração foi necessária ou nenhuma variável elegível apresentou proporção abaixo de 10%.")
 
                 df_modelo_final, cooks_d_arr, limite_cook_val = calcular_distancia_cook_e_filtrar(df_modelo_teste, col_alvo_temp, features_selecionadas)
                 st.info(f"📊 **Filtro de Distância de Cook aplicado:** {len(df_modelo_final)} comparáveis válidos mantidos (Limite de corte: {limite_cook_val:.4f}).")
