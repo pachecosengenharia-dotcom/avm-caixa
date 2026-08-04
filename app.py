@@ -60,13 +60,22 @@ if 'autenticado' not in st.session_state:
         st.session_state.usuario_atual = None
 
 # =====================================================================
-# LIMPEZA DE CAMPOS EDITÁVEIS AO ATUALIZAR (F5) - EXETO NUMÉRICAS
+# LIMPEZA DE CAMPOS EDITÁVEIS NO F5 (EXCETO VARIÁVEIS NUMÉRICAS)
 # =====================================================================
-if 'f5_limpeza_inicial_executada' not in st.session_state:
+if 'f5_limpeza_executada' not in st.session_state:
     st.session_state.especificacoes_variaveis = {}
     st.session_state.sinais_variaveis = {}
     st.session_state.classificacoes_variaveis = {}
-    st.session_state.f5_limpeza_inicial_executada = True
+    st.session_state.valores_manuais = {}
+    # Limpa inputs textuais e selectbox/inputs gerais da barra lateral e formulários
+    keys_para_remover = [
+        "login_email", "login_senha", "cad_nome", "cad_email", "cad_senha",
+        "mun_p_auto", "tip_p_auto", "uploader_logo_usuario", "uploader_multiplos"
+    ]
+    for k in keys_para_remover:
+        if k in st.session_state:
+            del st.session_state[k]
+    st.session_state.f5_limpeza_executada = True
 
 if 'saneamento_executado' not in st.session_state:
     st.session_state.saneamento_executado = False
@@ -164,7 +173,7 @@ if teste_expirado:
     st.stop()
 
 # =====================================================================
-# PROCESSAMENTO DE LEITURA OCR / CERTIDÕES (MOTOR OTIMIZADO)
+# PROCESSAMENTO DE LEITURA OCR / CERTIDÕES (MOTOR OTIMIZADO - QUARTOS)
 # =====================================================================
 def converter_extenso_para_numero(texto):
     mapa = {'um': 1, 'dois': 2, 'três': 3, 'quatro': 4, 'cinco': 5, 'seis': 6, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5}
@@ -265,7 +274,7 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     variaveis_encontradas['area_terreno'] = val_terreno_extraido
     variaveis_encontradas['area_do_terreno'] = val_terreno_extraido
 
-    # Leitura automatica refinada e robusta para quantidade de quartos
+    # Identificação exata da quantidade de quartos do imóvel
     match_qt = re.search(r'(?:quartos?|dormit[óo]rios?|c[ôo]modos)[:\s]*([0-9]+|\b(?:um|dois|três|quatro|cinco)\b)', texto_total, re.IGNORECASE)
     if not match_qt:
         match_qt = re.search(r'([0-9]+|\b(?:um|dois|três|quatro|cinco)\b)\s*(?:quartos?|dormit[óo]rios?|c[ôo]modos)', texto_total, re.IGNORECASE)
@@ -304,14 +313,10 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     variaveis_encontradas['idade_aparente'] = val_idade
     variaveis_encontradas['idade'] = val_idade
 
-    logs_execucao.append(f"Leitura concluída com sucesso: OS = {os_extraida} | Quartos identificados = {val_q}")
+    logs_execucao.append(f"Leitura concluída com sucesso: OS = {os_extraida} | Quartos = {val_q}")
     return variaveis_encontradas, os_extraida, end_completo, informante_extraido, telefone_extraido, tipologia_detectada, logs_execucao
 
 def verificar_micronumerosidade_condicionado(df, features_selecionadas, classificacoes_var):
-    """
-    Saneamento de micronumerosidade rigorosamente condicionado às variáveis:
-    Dicotômica, Código Alocado e Proxy Temporal.
-    """
     alertas = []
     n_total = len(df)
     tipos_saneaveis = ["Dicotômica", "Código Alocado", "Proxy Temporal"]
@@ -444,7 +449,6 @@ if 'informante_auto' not in st.session_state: st.session_state.informante_auto =
 if 'telefone_auto' not in st.session_state: st.session_state.telefone_auto = "(62) 3086-6956"
 if 'tipologia_auto' not in st.session_state: st.session_state.tipologia_auto = "Casa"
 if 'df_dinamico' not in st.session_state: st.session_state.df_dinamico = None
-if 'valores_manuais' not in st.session_state: st.session_state.valores_manuais = {}
 
 # MENU LATERAL COMPLETO
 st.sidebar.markdown(f"👤 **Usuário Logado:** `{st.session_state.usuario_atual}`")
@@ -525,8 +529,8 @@ with aba_repositorio:
         if st.button("🌐 Executar Varredura e Salvar no Repositório"):
             with st.spinner(f"Varrendo dados de {tipo_origem_input}..."):
                 df_ext_sim = pd.DataFrame([
-                    {"municipio": mun_p, "tipologia": tipo_p, "origem_dado": tipo_origem_input, "area": 180.0, "valor_total": 450000.0, "quartos": 3},
-                    {"municipio": mun_p, "tipologia": tipo_p, "origem_dado": tipo_origem_input, "area": 220.0, "valor_total": 530000.0, "quartos": 4}
+                    {"municipio": mun_p, "tipologia": tipo_p, "origem_dado": tipo_origem_input, "area_privativa": 180.0, "idade_aparente": 5.0, "quartos": 3, "valor_total": 450000.0},
+                    {"municipio": mun_p, "tipologia": tipo_p, "origem_dado": tipo_origem_input, "area_privativa": 220.0, "idade_aparente": 8.0, "quartos": 4, "valor_total": 530000.0}
                 ])
                 json_str = df_ext_sim.to_json(orient='records', force_ascii=False)
                 conn_rep.execute('''
@@ -681,7 +685,7 @@ with aba_avm:
         st.markdown("---")
         st.subheader("🤖 Configuração e Seleção de Variáveis Independentes")
         
-        # Filtragem rigorosa: apenas colunas numéricas (sem colunas de texto/strings na seleção independente)
+        # Filtro estrito: exclusão de colunas não numéricas e restrição garantida para area_privativa e idade_aparente
         colunas_candidatas = [c for c in df_global.columns if pd.api.types.is_numeric_dtype(df_global[c])]
 
         if len(colunas_candidatas) >= 2:
@@ -692,10 +696,9 @@ with aba_avm:
             termos_exclusao = ['valor_unitario', 'vu', 'id']
             features_disponiveis = [c for c in colunas_candidatas if c != col_valor_total and c != col_area_base and not any(t in c.lower() for t in termos_exclusao)]
 
-            default_features = features_disponiveis[:min(2, len(features_disponiveis))]
-            for feat_obrigatoria in ['idade_aparente', 'idade', 'quartos']:
-                if feat_obrigatoria in features_disponiveis and feat_obrigatoria not in default_features:
-                    default_features.append(feat_obrigatoria)
+            default_features = [c for c in ['area_privativa', 'idade_aparente', 'quartos'] if c in features_disponiveis]
+            if not default_features:
+                default_features = features_disponiveis[:min(2, len(features_disponiveis))]
 
             features_selecionadas = st.multiselect(
                 "Escolha as Variáveis Independentes do Modelo (Apenas Variáveis Numéricas):",
@@ -817,7 +820,6 @@ with aba_avm:
                     for alerta in alertas_micro:
                         st.markdown(alerta)
                 
-                # Botão específico para ativar o saneamento da micronumerosidade
                 if st.button("🎛️ Ativar Saneamento de Micronumerosidade (Dicotômicas, Códigos Alocados e Proxy Temporal)"):
                     df_modelo_teste, logs_rec = sanear_micronumerosidade_exato(df_modelo_teste, features_selecionadas, st.session_state.classificacoes_variaveis)
                     st.session_state.saneamento_executado = True
