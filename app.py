@@ -163,7 +163,7 @@ if teste_expirado:
     st.stop()
 
 # =====================================================================
-# MOTOR OCR ORIGINAL PERFEITO E RESTAURADO
+# LEITURA AUTOMÁTICA OCR ORIGINAL COMPLETA E PERFEITA
 # =====================================================================
 def converter_extenso_para_numero(texto):
     mapa = {'um': 1, 'dois': 2, 'três': 3, 'quatro': 4, 'cinco': 5, 'seis': 6, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5}
@@ -205,15 +205,15 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     variaveis_encontradas = {}
     
     ref_match = re.search(r'(?:OS|Ordem\s+de\s+Serviço|Refer[êe]ncia)[:\s#]*([0-9\.\/\-]+)', texto_total, re.IGNORECASE)
-    os_extraida = ref_match.group(1).strip() if ref_match else "7375.3596.000805648/2026.01.01"
+    os_extraida = ref_match.group(1).strip() if ref_match else ""
 
     inf_match = re.search(r'(?:Informante\s*/\s*Contato|Informante|Contato|Respons[áa]vel)[:\s]+([A-Z\u00C0-\u00DD\s]{3,35})', texto_total, re.IGNORECASE)
-    informante_extraido = inf_match.group(1).strip() if inf_match else "ROBERT"
+    informante_extraido = inf_match.group(1).strip() if inf_match else ""
     for termo in ["Telefone", "Tel", "Cel", "Email", "Endereço"]:
         if termo in informante_extraido:
             informante_extraido = informante_extraido.split(termo)[0].strip()
 
-    telefone_extraido = "(62) 3086-6956"
+    telefone_extraido = ""
     linhas_texto = texto_total.split('\n')
     for idx, linha in enumerate(linhas_texto):
         if any(termo in linha.lower() for termo in ["contato:", "telefone do contato", "tel. contato", "celular contato", "responsável:"]):
@@ -223,12 +223,18 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
                 telefone_extraido = t_busca_match.group(0).strip()
                 break
 
-    end_completo = "Rua São Clemente, Quadra 334, Lote 17, Condomínio Residencial, Jardim Buriti Sereno, Goiânia - GO"
+    end_completo = ""
     end_match = re.search(r'(?:Endereço(?:\s+do\s+Imóvel)?|Imóvel situado|Localização)[:\s]+([^\n\r]+(?:\n[^\n\r]+){0,3})', texto_total, re.IGNORECASE)
     if end_match:
         end_extraido_bruto = end_match.group(1).strip().replace('\n', ' ')
         if len(end_extraido_bruto) > 5:
             end_completo = end_extraido_bruto
+
+    condo_match = re.search(r'(?:Condom[íi]nio|Loteamento|Residencial)[:\s]+([A-Z\u00C0-\u00DD0-9\s]{3,40})', texto_total, re.IGNORECASE)
+    if condo_match:
+        nome_condominio = condo_match.group(1).strip()
+        if end_completo and nome_condominio.lower() not in end_completo.lower():
+            end_completo += f" - Condomínio {nome_condominio}"
 
     tipologia_detectada = "Casa"
     t_lower = texto_total.lower()
@@ -245,7 +251,7 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
             return val_padrao
 
     match_ap = re.search(r'(?:[áa]rea\s+(?:privativa\s+coberta|privativa|constru[íi]da))[:\s]*([0-9\.,]+)', texto_total, re.IGNORECASE)
-    variaveis_encontradas['area_privativa'] = converter_valor_num(match_ap, 82.33)
+    variaveis_encontradas['area_privativa'] = converter_valor_num(match_ap, 0.0)
     variaveis_encontradas['area_construida'] = variaveis_encontradas['area_privativa']
 
     match_at = re.search(r'fra[çc][ãa]o\s+ideal[^0-9]*([0-9\.,]+)', texto_total, re.IGNORECASE)
@@ -254,7 +260,7 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     if not match_at:
         match_at = re.search(r'terreno[^0-9]*([0-9\.,]+)\s*m[2²]', texto_total, re.IGNORECASE)
     
-    val_terreno_extraido = converter_valor_num(match_at, 197.25)
+    val_terreno_extraido = converter_valor_num(match_at, 0.0)
     variaveis_encontradas['area_terreno'] = val_terreno_extraido
     variaveis_encontradas['area_do_terreno'] = val_terreno_extraido
 
@@ -264,24 +270,24 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     
     if match_qt:
         val_txt = match_qt.group(1).lower()
-        val_q = float(int(val_txt) if val_txt.isdigit() else (converter_extenso_para_numero(val_txt) or 3.0))
+        val_q = float(int(val_txt) if val_txt.isdigit() else (converter_extenso_para_numero(val_txt) or 0.0))
     else:
-        val_q = 3.0
+        val_q = 0.0
     variaveis_encontradas['quartos'] = val_q
 
     match_st = re.search(r'([0-9]+|\b(?:um|dois|três|quatro)\b)\s*su[íi]tes', texto_total, re.IGNORECASE)
     if match_st:
         val_txt = match_st.group(1)
-        variaveis_encontradas['suite'] = float(int(val_txt) if val_txt.isdigit() else (converter_extenso_para_numero(val_txt) or 1.0))
+        variaveis_encontradas['suite'] = float(int(val_txt) if val_txt.isdigit() else (converter_extenso_para_numero(val_txt) or 0.0))
     else:
-        variaveis_encontradas['suite'] = 1.0
+        variaveis_encontradas['suite'] = 0.0
 
     match_banh = re.search(r'([0-9]+|\b(?:um|dois|três|quatro)\b)\s*banheiros?', texto_total, re.IGNORECASE)
     if match_banh:
         val_txt = match_banh.group(1)
-        variaveis_encontradas['banheiros'] = float(int(val_txt) if val_txt.isdigit() else (converter_extenso_para_numero(val_txt) or 2.0))
+        variaveis_encontradas['banheiros'] = float(int(val_txt) if val_txt.isdigit() else (converter_extenso_para_numero(val_txt) or 0.0))
     else:
-        variaveis_encontradas['banheiros'] = 2.0
+        variaveis_encontradas['banheiros'] = 0.0
 
     match_idade = re.search(r'(?:idade\s+aparente|idade\s+do\s+im[óo]vel|ano\s+de\s+constru[çc][ãa]o|vida\s+[úu]til)[:\s]*([0-9]+)', texto_total, re.IGNORECASE)
     if match_idade:
@@ -292,7 +298,7 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
             ano_const = int(match_ano.group(1))
             val_idade = float(2026 - ano_const)
         else:
-            val_idade = 5.0
+            val_idade = 0.0
     variaveis_encontradas['idade_aparente'] = val_idade
     variaveis_encontradas['idade'] = val_idade
 
@@ -647,15 +653,20 @@ with aba_avm:
         st.subheader("📝 Seleção de Variáveis Independentes Direto na Planilha")
         st.markdown("Ative com um clique na coluna **Usar?** quais variáveis numéricas farão parte dos cálculos estatísticos:")
 
-        # Identifica colunas estritamente numéricas aptas para seleção
+        # Filtro estrito: Exclui endereço, mas garante que idade_aparente e demais numéricas apareçam
         termos_proibidos = ['endereco', 'informante', 'telefone', 'complemento', 'bairro', 'municipio', 'tipologia', 'origem_dado', 'id']
         colunas_candidatas_planilha = []
         for c in df_global.columns:
             c_lower = str(c).lower().strip()
-            if pd.api.types.is_numeric_dtype(df_global[c]) and not any(termo in c_lower for termo in termos_proibidos):
-                colunas_candidatas_planilha.append(c)
+            # Garante que colunas numéricas ou específicas como idade_aparente fiquem disponíveis
+            if (pd.api.types.is_numeric_dtype(df_global[c]) or 'idade' in c_lower) and not any(termo in c_lower for termo in termos_proibidos):
+                if c not in colunas_candidatas_planilha:
+                    colunas_candidatas_planilha.append(c)
 
-        # Cria uma tabela auxiliar de configuração de variáveis com checkboxes (círculos/seletores)
+        # Garante explicitamente a presença de idade_aparente se estiver na base ou nos padrões
+        if 'idade_aparente' in df_global.columns and 'idade_aparente' not in colunas_candidatas_planilha:
+            colunas_candidatas_planilha.append('idade_aparente')
+
         if 'config_vars_df' not in st.session_state or set(st.session_state.config_vars_df['Variável']) != set(colunas_candidatas_planilha):
             st.session_state.config_vars_df = pd.DataFrame({
                 'Variável': colunas_candidatas_planilha,
@@ -673,7 +684,6 @@ with aba_avm:
         )
         st.session_state.config_vars_df = df_config_editado
 
-        # Filtra apenas as variáveis marcadas com True
         features_selecionadas = df_config_editado[df_config_editado['Usar?'] == True]['Variável'].tolist()
 
         st.markdown("---")
