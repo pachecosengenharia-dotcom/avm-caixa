@@ -163,7 +163,7 @@ if teste_expirado:
     st.stop()
 
 # =====================================================================
-# MOTOR OCR ROBUSTO E RESTAURADO PARA CAPTURA DE DADOS CADASTRAIS E VARIÁVEIS
+# MOTOR OCR ORIGINAL PERFEITO E RESTAURADO
 # =====================================================================
 def converter_extenso_para_numero(texto):
     mapa = {'um': 1, 'dois': 2, 'três': 3, 'quatro': 4, 'cinco': 5, 'seis': 6, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5}
@@ -204,18 +204,15 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
 
     variaveis_encontradas = {}
     
-    # Extração robusta de OS
     ref_match = re.search(r'(?:OS|Ordem\s+de\s+Serviço|Refer[êe]ncia)[:\s#]*([0-9\.\/\-]+)', texto_total, re.IGNORECASE)
     os_extraida = ref_match.group(1).strip() if ref_match else "7375.3596.000805648/2026.01.01"
 
-    # Extração de Informante
     inf_match = re.search(r'(?:Informante\s*/\s*Contato|Informante|Contato|Respons[áa]vel)[:\s]+([A-Z\u00C0-\u00DD\s]{3,35})', texto_total, re.IGNORECASE)
     informante_extraido = inf_match.group(1).strip() if inf_match else "ROBERT"
     for termo in ["Telefone", "Tel", "Cel", "Email", "Endereço"]:
         if termo in informante_extraido:
             informante_extraido = informante_extraido.split(termo)[0].strip()
 
-    # Extração de Telefone
     telefone_extraido = "(62) 3086-6956"
     linhas_texto = texto_total.split('\n')
     for idx, linha in enumerate(linhas_texto):
@@ -226,7 +223,6 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
                 telefone_extraido = t_busca_match.group(0).strip()
                 break
 
-    # Extração de Endereço
     end_completo = "Rua São Clemente, Quadra 334, Lote 17, Condomínio Residencial, Jardim Buriti Sereno, Goiânia - GO"
     end_match = re.search(r'(?:Endereço(?:\s+do\s+Imóvel)?|Imóvel situado|Localização)[:\s]+([^\n\r]+(?:\n[^\n\r]+){0,3})', texto_total, re.IGNORECASE)
     if end_match:
@@ -262,7 +258,6 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     variaveis_encontradas['area_terreno'] = val_terreno_extraido
     variaveis_encontradas['area_do_terreno'] = val_terreno_extraido
 
-    # Leitura automatica de quartos corrigida e infalível
     match_qt = re.search(r'(?:quartos?|dormit[óo]rios?|c[ôo]modos)[:\s]*([0-9]+|\b(?:um|dois|três|quatro|cinco)\b)', texto_total, re.IGNORECASE)
     if not match_qt:
         match_qt = re.search(r'([0-9]+|\b(?:um|dois|três|quatro|cinco)\b)\s*(?:quartos?|dormit[óo]rios?|c[ôo]modos)', texto_total, re.IGNORECASE)
@@ -288,7 +283,6 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     else:
         variaveis_encontradas['banheiros'] = 2.0
 
-    # Leitura automática da idade aparente
     match_idade = re.search(r'(?:idade\s+aparente|idade\s+do\s+im[óo]vel|ano\s+de\s+constru[çc][ãa]o|vida\s+[úu]til)[:\s]*([0-9]+)', texto_total, re.IGNORECASE)
     if match_idade:
         val_idade = float(match_idade.group(1))
@@ -449,7 +443,7 @@ st.sidebar.markdown("---")
 tenant_selecionado = st.sidebar.selectbox("Cliente Institucional / Tomador", ["001 - Banco Alfa S.A.", "002 - Imobiliária Local Ltda"])
 tipologia_imovel = st.sidebar.selectbox("Tipologia do Imóvel", ["Casa", "Apartamento", "Lote", "Galpão Comercial"])
 
-# Campos da barra lateral populados automaticamente pelas variáveis OCR armazenadas
+# Campos da barra lateral populados automaticamente pelo OCR
 ordem_servico_input = st.sidebar.text_input("Número da Ordem de Serviço (OS)", value=st.session_state.os_auto, key="os_input_key")
 endereco_imovel_input = st.sidebar.text_input("Endereço do Imóvel", value=st.session_state.endereco_auto, key="endereco_input_key")
 informante_nome = st.sidebar.text_input("Nome do Informante / Contato", value=st.session_state.informante_auto, key="informante_input_key")
@@ -650,47 +644,57 @@ with aba_avm:
                 df_global[col] = pd.to_numeric(df_global[col], errors='coerce')
 
         st.markdown("---")
-        st.subheader("📝 Visualizar e Selecionar Variáveis Diretamente na Planilha de Mercado")
-        st.markdown("Edite os dados ou selecione diretamente as colunas/variáveis que deseja utilizar no modelo analítico:")
-        
-        df_editado_usuario = st.data_editor(df_global, num_rows="dynamic", key="editor_planilha_mercado")
-        if df_editado_usuario is not None:
-            for col in df_editado_usuario.columns:
-                if col not in ['municipio', 'tipologia', 'origem_dado', 'endereco']:
-                    df_editado_usuario[col] = pd.to_numeric(df_editado_usuario[col], errors='coerce')
-            st.session_state.df_dinamico = df_editado_usuario
-            df_global = df_editado_usuario
+        st.subheader("📝 Seleção de Variáveis Independentes Direto na Planilha")
+        st.markdown("Ative com um clique na coluna **Usar?** quais variáveis numéricas farão parte dos cálculos estatísticos:")
 
-        st.markdown("---")
-        st.subheader("🤖 Configuração e Seleção de Variáveis Independentes")
-        
-        # Filtro estrito: Garante exclusão de colunas textuais/strings (como endereço, informante, telefone, etc.)
-        colunas_candidatas = []
+        # Identifica colunas estritamente numéricas aptas para seleção
         termos_proibidos = ['endereco', 'informante', 'telefone', 'complemento', 'bairro', 'municipio', 'tipologia', 'origem_dado', 'id']
+        colunas_candidatas_planilha = []
         for c in df_global.columns:
             c_lower = str(c).lower().strip()
             if pd.api.types.is_numeric_dtype(df_global[c]) and not any(termo in c_lower for termo in termos_proibidos):
-                colunas_candidatas.append(c)
+                colunas_candidatas_planilha.append(c)
 
-        if len(colunas_candidatas) >= 1:
+        # Cria uma tabela auxiliar de configuração de variáveis com checkboxes (círculos/seletores)
+        if 'config_vars_df' not in st.session_state or set(st.session_state.config_vars_df['Variável']) != set(colunas_candidatas_planilha):
+            st.session_state.config_vars_df = pd.DataFrame({
+                'Variável': colunas_candidatas_planilha,
+                'Usar?': [True if c in ['area_privativa', 'idade_aparente', 'quartos'] else False for c in colunas_candidatas_planilha]
+            })
+
+        df_config_editado = st.data_editor(
+            st.session_state.config_vars_df,
+            column_config={
+                "Usar?": st.column_config.CheckboxColumn("Usar nos Cálculos?", default=False),
+                "Variável": st.column_config.TextColumn("Nome da Variável Numérica", disabled=True)
+            },
+            hide_index=True,
+            key="editor_selecao_vars"
+        )
+        st.session_state.config_vars_df = df_config_editado
+
+        # Filtra apenas as variáveis marcadas com True
+        features_selecionadas = df_config_editado[df_config_editado['Usar?'] == True]['Variável'].tolist()
+
+        st.markdown("---")
+        with st.expander("📝 Visualizar e Editar Planilha de Mercado Completa", expanded=False):
+            df_editado_usuario = st.data_editor(df_global, num_rows="dynamic", key="editor_planilha_mercado")
+            if df_editado_usuario is not None:
+                for col in df_editado_usuario.columns:
+                    if col not in ['municipio', 'tipologia', 'origem_dado', 'endereco']:
+                        df_editado_usuario[col] = pd.to_numeric(df_editado_usuario[col], errors='coerce')
+                st.session_state.df_dinamico = df_editado_usuario
+                df_global = df_editado_usuario
+
+        st.markdown("---")
+        st.subheader("🤖 Configuração do Modelo Analítico")
+
+        if len(features_selecionadas) >= 1:
             c1, c2 = st.columns(2)
             col_valor_total = c1.selectbox("Coluna de Valor Total na Base:", [c for c in df_global.columns if 'valor' in c.lower() or 'preco' in c.lower()] + df_global.columns.tolist())
             col_area_base = c2.selectbox("Coluna de Área Base:", [c for c in df_global.columns if 'area' in c.lower()] + df_global.columns.tolist())
 
-            termos_exclusao = ['valor_unitario', 'vu', 'id']
-            features_disponiveis = [c for c in colunas_candidatas if c != col_valor_total and c != col_area_base and not any(t in c.lower() for t in termos_exclusao)]
-
-            default_features = [c for c in ['area_privativa', 'idade_aparente', 'quartos'] if c in features_disponiveis]
-            if not default_features:
-                default_features = features_disponiveis[:min(2, len(features_disponiveis))]
-
-            features_selecionadas = st.multiselect(
-                "Escolha as Variáveis Independentes do Modelo (Apenas Numéricas):",
-                options=features_disponiveis,
-                default=default_features
-            )
-
-            if features_selecionadas and col_valor_total and col_area_base:
+            if col_valor_total and col_area_base:
                 colunas_nec = list(set(features_selecionadas + [col_valor_total, col_area_base]))
                 df_modelo_teste = df_global[colunas_nec].copy()
                 for c in colunas_nec:
@@ -871,6 +875,8 @@ with aba_avm:
                         buf_ad, buf_res, buf_cook, buf_minmax, df_global, df_modelo_final
                     )
                     st.download_button("📄 Baixar Laudo Completo em PDF", data=pdf_bytes, file_name=f"laudo_nbr_{ordem_servico_input or 'OS001'}.pdf", mime="application/pdf")
+        else:
+            st.warning("⚠️ Selecione ao menos uma variável numérica na tabela acima para prosseguir com o modelo.")
 
 # =====================================================================
 # ABA 3: ANÁLISE JURÍDICA
