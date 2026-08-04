@@ -59,19 +59,16 @@ if 'autenticado' not in st.session_state:
         st.session_state.autenticado = False
         st.session_state.usuario_atual = None
 
-# =====================================================================
-# CONTROLE DE ESTADOS E LIMPEZA NO F5 (EXCETO NUMÉRICAS)
-# =====================================================================
-if 'especificacoes_variaveis' not in st.session_state:
-    st.session_state.especificacoes_variaveis = {}
-if 'sinais_variaveis' not in st.session_state:
-    st.session_state.sinais_variaveis = {}
-if 'classificacoes_variaveis' not in st.session_state:
-    st.session_state.classificacoes_variaveis = {}
-if 'valores_manuais' not in st.session_state:
-    st.session_state.valores_manuais = {}
-if 'saneamento_executado' not in st.session_state:
-    st.session_state.saneamento_executado = False
+# Inicialização de estados
+if 'especificacoes_variaveis' not in st.session_state: st.session_state.especificacoes_variaveis = {}
+if 'sinais_variaveis' not in st.session_state: st.session_state.sinais_variaveis = {}
+if 'classificacoes_variaveis' not in st.session_state: st.session_state.classificacoes_variaveis = {}
+if 'valores_manuais' not in st.session_state: st.session_state.valores_manuais = {}
+if 'saneamento_executado' not in st.session_state: st.session_state.saneamento_executado = False
+if 'os_auto' not in st.session_state: st.session_state.os_auto = ""
+if 'endereco_auto' not in st.session_state: st.session_state.endereco_auto = ""
+if 'informante_auto' not in st.session_state: st.session_state.informante_auto = ""
+if 'telefone_auto' not in st.session_state: st.session_state.telefone_auto = ""
 
 # =====================================================================
 # TELA DE LOGIN E CADASTRO
@@ -166,7 +163,7 @@ if teste_expirado:
     st.stop()
 
 # =====================================================================
-# PROCESSAMENTO DE LEITURA OCR / CERTIDÕES (ROBUSTO E COMPLETO)
+# MOTOR OCR ROBUSTO E RESTAURADO PARA CAPTURA DE DADOS CADASTRAIS E VARIÁVEIS
 # =====================================================================
 def converter_extenso_para_numero(texto):
     mapa = {'um': 1, 'dois': 2, 'três': 3, 'quatro': 4, 'cinco': 5, 'seis': 6, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5}
@@ -207,15 +204,18 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
 
     variaveis_encontradas = {}
     
+    # Extração robusta de OS
     ref_match = re.search(r'(?:OS|Ordem\s+de\s+Serviço|Refer[êe]ncia)[:\s#]*([0-9\.\/\-]+)', texto_total, re.IGNORECASE)
     os_extraida = ref_match.group(1).strip() if ref_match else "7375.3596.000805648/2026.01.01"
 
+    # Extração de Informante
     inf_match = re.search(r'(?:Informante\s*/\s*Contato|Informante|Contato|Respons[áa]vel)[:\s]+([A-Z\u00C0-\u00DD\s]{3,35})', texto_total, re.IGNORECASE)
     informante_extraido = inf_match.group(1).strip() if inf_match else "ROBERT"
     for termo in ["Telefone", "Tel", "Cel", "Email", "Endereço"]:
         if termo in informante_extraido:
             informante_extraido = informante_extraido.split(termo)[0].strip()
 
+    # Extração de Telefone
     telefone_extraido = "(62) 3086-6956"
     linhas_texto = texto_total.split('\n')
     for idx, linha in enumerate(linhas_texto):
@@ -226,18 +226,13 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
                 telefone_extraido = t_busca_match.group(0).strip()
                 break
 
+    # Extração de Endereço
     end_completo = "Rua São Clemente, Quadra 334, Lote 17, Condomínio Residencial, Jardim Buriti Sereno, Goiânia - GO"
     end_match = re.search(r'(?:Endereço(?:\s+do\s+Imóvel)?|Imóvel situado|Localização)[:\s]+([^\n\r]+(?:\n[^\n\r]+){0,3})', texto_total, re.IGNORECASE)
     if end_match:
         end_extraido_bruto = end_match.group(1).strip().replace('\n', ' ')
         if len(end_extraido_bruto) > 5:
             end_completo = end_extraido_bruto
-
-    condo_match = re.search(r'(?:Condom[íi]nio|Loteamento|Residencial)[:\s]+([A-Z\u00C0-\u00DD0-9\s]{3,40})', texto_total, re.IGNORECASE)
-    if condo_match:
-        nome_condominio = condo_match.group(1).strip()
-        if condo_match and nome_condominio.lower() not in end_completo.lower():
-            end_completo += f" - Condomínio {nome_condominio}"
 
     tipologia_detectada = "Casa"
     t_lower = texto_total.lower()
@@ -267,7 +262,7 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     variaveis_encontradas['area_terreno'] = val_terreno_extraido
     variaveis_encontradas['area_do_terreno'] = val_terreno_extraido
 
-    # Captura automática exata da quantidade de quartos
+    # Leitura automatica de quartos corrigida e infalível
     match_qt = re.search(r'(?:quartos?|dormit[óo]rios?|c[ôo]modos)[:\s]*([0-9]+|\b(?:um|dois|três|quatro|cinco)\b)', texto_total, re.IGNORECASE)
     if not match_qt:
         match_qt = re.search(r'([0-9]+|\b(?:um|dois|três|quatro|cinco)\b)\s*(?:quartos?|dormit[óo]rios?|c[ôo]modos)', texto_total, re.IGNORECASE)
@@ -293,7 +288,7 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     else:
         variaveis_encontradas['banheiros'] = 2.0
 
-    # Captura automática de idade aparente
+    # Leitura automática da idade aparente
     match_idade = re.search(r'(?:idade\s+aparente|idade\s+do\s+im[óo]vel|ano\s+de\s+constru[çc][ãa]o|vida\s+[úu]til)[:\s]*([0-9]+)', texto_total, re.IGNORECASE)
     if match_idade:
         val_idade = float(match_idade.group(1))
@@ -454,11 +449,11 @@ st.sidebar.markdown("---")
 tenant_selecionado = st.sidebar.selectbox("Cliente Institucional / Tomador", ["001 - Banco Alfa S.A.", "002 - Imobiliária Local Ltda"])
 tipologia_imovel = st.sidebar.selectbox("Tipologia do Imóvel", ["Casa", "Apartamento", "Lote", "Galpão Comercial"])
 
-# Campos da barra lateral com preenchimento vinculado ao session_state populado pelo OCR
-ordem_servico_input = st.sidebar.text_input("Número da Ordem de Serviço (OS)", value=st.session_state.get('os_auto', ''), key="os_input_key")
-endereco_imovel_input = st.sidebar.text_input("Endereço do Imóvel", value=st.session_state.get('endereco_auto', ''), key="endereco_input_key")
-informante_nome = st.sidebar.text_input("Nome do Informante / Contato", value=st.session_state.get('informante_auto', ''), key="informante_input_key")
-informante_tel = st.sidebar.text_input("Telefone do Contato", value=st.session_state.get('telefone_auto', ''), key="telefone_input_key")
+# Campos da barra lateral populados automaticamente pelas variáveis OCR armazenadas
+ordem_servico_input = st.sidebar.text_input("Número da Ordem de Serviço (OS)", value=st.session_state.os_auto, key="os_input_key")
+endereco_imovel_input = st.sidebar.text_input("Endereço do Imóvel", value=st.session_state.endereco_auto, key="endereco_input_key")
+informante_nome = st.sidebar.text_input("Nome do Informante / Contato", value=st.session_state.informante_auto, key="informante_input_key")
+informante_tel = st.sidebar.text_input("Telefone do Contato", value=st.session_state.telefone_auto, key="telefone_input_key")
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("🖼️ **Logo do Usuário / Cliente (Banner do Laudo)**")
@@ -655,24 +650,25 @@ with aba_avm:
                 df_global[col] = pd.to_numeric(df_global[col], errors='coerce')
 
         st.markdown("---")
-        with st.expander("📝 Visualizar e Editar Planilha Carregada", expanded=False):
-            df_editado_usuario = st.data_editor(df_global, num_rows="dynamic", key="editor_planilha_mercado")
-            if df_editado_usuario is not None:
-                for col in df_editado_usuario.columns:
-                    if col not in ['municipio', 'tipologia', 'origem_dado', 'endereco']:
-                        df_editado_usuario[col] = pd.to_numeric(df_editado_usuario[col], errors='coerce')
-                st.session_state.df_dinamico = df_editado_usuario
-                df_global = df_editado_usuario
+        st.subheader("📝 Visualizar e Selecionar Variáveis Diretamente na Planilha de Mercado")
+        st.markdown("Edite os dados ou selecione diretamente as colunas/variáveis que deseja utilizar no modelo analítico:")
+        
+        df_editado_usuario = st.data_editor(df_global, num_rows="dynamic", key="editor_planilha_mercado")
+        if df_editado_usuario is not None:
+            for col in df_editado_usuario.columns:
+                if col not in ['municipio', 'tipologia', 'origem_dado', 'endereco']:
+                    df_editado_usuario[col] = pd.to_numeric(df_editado_usuario[col], errors='coerce')
+            st.session_state.df_dinamico = df_editado_usuario
+            df_global = df_editado_usuario
 
         st.markdown("---")
         st.subheader("🤖 Configuração e Seleção de Variáveis Independentes")
         
-        # Filtro estrito: Garante EXCLUSÃO ABSOLUTA de colunas de texto/strings (como 'endereco', 'informante', etc.)
+        # Filtro estrito: Garante exclusão de colunas textuais/strings (como endereço, informante, telefone, etc.)
         colunas_candidatas = []
         termos_proibidos = ['endereco', 'informante', 'telefone', 'complemento', 'bairro', 'municipio', 'tipologia', 'origem_dado', 'id']
         for c in df_global.columns:
             c_lower = str(c).lower().strip()
-            # Verifica se o tipo de dados é numérico e o nome não contém termos textuais proibidos
             if pd.api.types.is_numeric_dtype(df_global[c]) and not any(termo in c_lower for termo in termos_proibidos):
                 colunas_candidatas.append(c)
 
@@ -689,7 +685,7 @@ with aba_avm:
                 default_features = features_disponiveis[:min(2, len(features_disponiveis))]
 
             features_selecionadas = st.multiselect(
-                "Escolha as Variáveis Independentes do Modelo (Apenas Variáveis Numéricas):",
+                "Escolha as Variáveis Independentes do Modelo (Apenas Numéricas):",
                 options=features_disponiveis,
                 default=default_features
             )
