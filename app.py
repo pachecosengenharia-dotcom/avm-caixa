@@ -177,10 +177,9 @@ if teste_expirado:
     st.stop()
 
 # =====================================================================
-# AUXILIARES PARA SUGESTÕES E PREENCHIMENTO AUTOMÁTICO (ITENS 3, 4 E 5)
+# AUXILIARES PARA SUGESTÕES E PREENCHIMENTO AUTOMÁTICO
 # =====================================================================
 def criar_campo_especificacao_com_sugestoes(label, campo_chave, valor_atual):
-    # Sugestões limpas para as variáveis (sem as observações de ajustes)
     opcoes_fixas = [
         "-- Selecione a Especificação Padrão --",
         "ÁREA DO LOTE EM M²",
@@ -715,7 +714,7 @@ def gerar_laudo_pdf_ia(tenant, tipologia, variavel_alvo, ordem_servico, endereco
     story.append(Paragraph(f"<b>Cálculo do Valor Adotado:</b> Estimado {op_str_visual} {percentual_ajuste:.1f}% = <b>R$ {valores['v_adotado']:,.2f}</b> (Unitário: R$ {valores['vu_adotado']:,.2f}/m²)", text_style))
     if motivo_ajuste and motivo_ajuste.strip():
         story.append(Paragraph(f"<b>Justificativa Técnica:</b> {motivo_ajuste}", text_style))
-    
+        
     t2 = Table([
         ["Métrica / Cobertura de Risco", "Valor Total (R$)", "Valor Unitário (R$/m²)", "Variação (%)"],
         ["Mínimo (Segurança)", f"R$ {valores['v_min']:,.2f}", f"R$ {valores['vu_min']:,.2f}", f"{valores['var_min']:+.2f}%"],
@@ -837,7 +836,7 @@ def gerar_laudo_pdf_ia(tenant, tipologia, variavel_alvo, ordem_servico, endereco
     return buffer.getvalue()
 
 # =====================================================================
-# MOTOR DE PARSER OTIMIZADO PARA ALTA VELOCIDADE
+# MOTOR DE PARSER OTIMIZADO PARA ALTA VELOCIDADE (CERTIDÕES, OS E PROJETOS)
 # =====================================================================
 def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     texto_total = ""
@@ -847,20 +846,33 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
         texto_arquivo = ""
         try:
             bytes_arq = arquivo.read()
-            with pdfplumber.open(io.BytesIO(bytes_arq)) as pdf:
-                for pagina in pdf.pages:
-                    txt = pagina.extract_text()
-                    if txt:
-                        texto_arquivo += txt + "\n"
+            extensao = arquivo.name.split('.')[-1].lower()
             
-            if not texto_arquivo.strip():
-                imagens = convert_from_bytes(bytes_arq, dpi=150)
-                for img in imagens:
-                    txt_ocr = pytesseract.image_to_string(img, lang='por')
-                    texto_arquivo += txt_ocr + "\n"
-                logs_execucao.append(f"Arquivo `{arquivo.name}` processado via OCR otimizado (DPI 150).")
+            if extensao in ['pdf']:
+                with pdfplumber.open(io.BytesIO(bytes_arq)) as pdf:
+                    for pagina in pdf.pages:
+                        txt = pagina.extract_text()
+                        if txt:
+                            texto_arquivo += txt + "\n"
+                
+                # Fallback para OCR se o PDF for escaneado/imagem
+                if not texto_arquivo.strip():
+                    imagens = convert_from_bytes(bytes_arq, dpi=150)
+                    for img in imagens:
+                        txt_ocr = pytesseract.image_to_string(img, lang='por')
+                        texto_arquivo += txt_ocr + "\n"
+                    logs_execucao.append(f"Arquivo `{arquivo.name}` processado via OCR otimizado (DPI 150).")
+                else:
+                    logs_execucao.append(f"Arquivo `{arquivo.name}` lido instantaneamente via texto nativo ({len(texto_arquivo)} caracteres).")
+            elif extensao in ['jpg', 'jpeg', 'png']:
+                imagem = PILImage.open(io.BytesIO(bytes_arq))
+                texto_arquivo = pytesseract.image_to_string(imagem, lang='por')
+                logs_execucao.append(f"Imagem `{arquivo.name}` processada via OCR com sucesso.")
+            elif extensao in ['txt']:
+                texto_arquivo = bytes_arq.decode('utf-8', errors='ignore')
+                logs_execucao.append(f"Arquivo de texto `{arquivo.name}` lido com sucesso.")
             else:
-                logs_execucao.append(f"Arquivo `{arquivo.name}` lido instantaneamente via texto nativo ({len(texto_arquivo)} caracteres).")
+                logs_execucao.append(f"Formato não suportado diretamente para `{arquivo.name}`.")
                 
         except Exception as e:
             logs_execucao.append(f"Erro ao ler o arquivo `{arquivo.name}`: {str(e)}")
@@ -874,6 +886,7 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     trecho_limpo = re.sub(r'[\r\n\t]+', ' ', texto_total)
     trecho_limpo = re.sub(r'\s+', ' ', trecho_limpo)
 
+    # Extração de OS / Referência
     ref_match = re.search(r'Refer[êe]ncia[:\s#]*([0-9\.\/\-]+)', trecho_limpo, re.IGNORECASE)
     if ref_match:
         os_extraida = ref_match.group(1).strip()
@@ -881,36 +894,35 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
         os_match = re.search(r'(?:OS|Ordem de Servi[çc]o|N[ºúo]\.?\s*(?:de\s*)?Ordem|Processo)[:\s#]*([0-9A-Za-z\-\./]{3,40})', trecho_limpo, re.IGNORECASE)
         os_extraida = os_match.group(1).strip() if os_match else ""
 
-    end_match = re.search(r'Endereço[:\s]+([^C]+?)(?=\s*CEP:|\s*Cidade/UF:|\s*Bairro:|\s*Complemento:|$)', trecho_limpo, re.IGNORECASE)
-    rua_base = end_match.group(1).strip() if end_match else ""
-    if not rua_base or "Prazo" in rua_base or "Valor" in rua_base:
-        rua_alt = re.search(r'de\s+frente\s+para\s+a\s+([^,]+)', trecho_limpo, re.IGNORECASE)
-        rua_base = rua_alt.group(1).strip() if rua_alt else "Rua São Clemente"
+    # Extração Avançada de Endereço Completo (Rua, Quadra, Lote, Número, Bairro, Município)
+    rua_match = re.search(r'(?:Rua|Av\.|Avenida|Alameda|Al\.|Rodovia|Tv\.|Logradouro)\s+([A-Za-zÀ-ú\s,0-9-]+)', trecho_limpo, re.IGNORECASE)
+    rua_base = rua_match.group(0).strip() if rua_match else "Rua Principal"
 
-    cond_match = re.search(r'condom[íi]nio\s+"([^"]+)"', trecho_limpo, re.IGNORECASE)
-    quadra_match = re.search(r'(?:Quadra|Q[uãa]d?r?a)\.?[:\s]*([0-9A-Za-z\-]+)', trecho_limpo, re.IGNORECASE)
-    qdr_val = quadra_match.group(1).strip() if quadra_match and quadra_match.group(1).strip().lower() not in ['nto', ''] else "334"
-    
-    lote_match = re.search(r'Lote\.?:?\s*([0-9A-Za-z\-]+)', trecho_limpo, re.IGNORECASE)
-    bairro_match = re.search(r'(?:Bairro|Jardim|Setor)[:\s]+([^,\.]+?)(?=\s*[,.]|$)', trecho_limpo, re.IGNORECASE)
-    cidade_match = re.search(r'Cidade/UF[:\s]+([A-Za-z\u00C0-\u00FF\s/\-]+?)(?=\s*Prazo|\s*Valor|\s*Nome|$)', trecho_limpo, re.IGNORECASE)
+    quadra_match = re.search(r'(?:Quadra|Qd\.?)\s*([A-Za-z0-9-]+)', trecho_limpo, re.IGNORECASE)
+    qdr_val = quadra_match.group(1).strip() if quadra_match else ""
 
-    cond = f'Condomínio "{cond_match.group(1).strip()}"' if cond_match else ""
-    qdr = f"Quadra {qdr_val}"
-    lt = f"Lote {lote_match.group(1).strip()}" if lote_match else "17"
-    bairro = f"Bairro {bairro_match.group(1).strip()}" if bairro_match else "Jardim Buriti Sereno"
-    cidade = cidade_match.group(1).strip() if cidade_match else "APARECIDA DE GOIANIA/GO"
+    lote_match = re.search(r'(?:Lote|Lt\.?)\s*([A-Za-z0-9-]+)', trecho_limpo, re.IGNORECASE)
+    lt_val = lote_match.group(1).strip() if lote_match else ""
 
-    partes_endereco = [p for p in [rua_base, cond, qdr, lt, bairro, cidade] if p and "Prazo" not in p and "Valor" not in p]
-    endereco_extraido = ", ".join(partes_endereco) if partes_endereco else "Rua São Clemente, Quadra 334, Lote 17, Jardim Buriti Sereno, Aparecida de Goiânia/GO"
+    numero_match = re.search(r'(?:N[ºo°]?|Número)\s*[:]?\s*([0-9]+)', trecho_limpo, re.IGNORECASE)
+    num_val = numero_match.group(1).strip() if numero_match else ""
+
+    bairro_match = re.search(r'(?:Bairro|Setor)\s*[:]?\s*([A-Za-zÀ-ú\s]+)(?=\n|,|CEP)', trecho_limpo, re.IGNORECASE)
+    bairro_val = bairro_match.group(1).strip() if bairro_match else "Centro"
+
+    municipio_match = re.search(r'(?:Município|Cidade)\s*[:]?\s*([A-Za-zÀ-ú\s]+)(?=\n|,|-[A-Z]{2})', trecho_limpo, re.IGNORECASE)
+    municipio_val = municipio_match.group(1).strip() if municipio_match else "Goiânia/GO"
+
+    partes_end = [p for p in [rua_base, f"Quadra {qdr_val}" if qdr_val else "", f"Lote {lt_val}" if lt_val else "", f"Nº {num_val}" if num_val else "", f"Bairro {bairro_val}" if bairro_val else "", municipio_val] if p]
+    endereco_extraido = ", ".join(partes_end) if partes_end else "Rua Principal, Goiânia/GO"
 
     informante_match = re.search(r'(?:Informante|Contato|Respons[áa]vel)[:\s]+([A-Za-z\u00C0-\u00FF\s]{3,30})(?=\s*[-–(]|\s*Tel|\s*E-mail|$)', trecho_limpo, re.IGNORECASE)
-    informante_extraido = informante_match.group(1).strip() if informante_match else "ROBERT"
+    informante_extraido = informante_match.group(1).strip() if informante_match else "Equipe Técnica"
 
     telefone_match = re.search(r'(?:Contato|Informante|Telefone\s+do\s+Contato|Tel\s+Contato)[:\s\w\-]*?(\(?[0-9]{2}\)?\s*[0-9]{4,5}[\-\s]?[0-9]{4})', trecho_limpo, re.IGNORECASE)
     if not telefone_match:
         telefone_match = re.search(r'(?:Tel|Telefone|Cel|Celular)[:\s]*(\(?[0-9]{2}\)?\s*[0-9]{4,5}[\-\s]?[0-9]{4})', trecho_limpo, re.IGNORECASE)
-    telefone_extraido = telefone_match.group(1).strip() if telefone_match else "(62) 9614-6622"
+    telefone_extraido = telefone_match.group(1).strip() if telefone_match else "(62) 99999-9999"
 
     tipologia_detectada = "Casa"
     t_lower = trecho_limpo.lower()
@@ -923,31 +935,27 @@ def processar_multiplos_documentos_com_auditoria(lista_arquivos):
     elif "casa" in t_lower or "residência" in t_lower:
         tipologia_detectada = "Casa"
 
-    match_area_coberta = re.search(r'(\d{1,3}(?:[.,]\d{2})?)\s*metros\s*quadrados\s*de\s*área\s*privativa\s*coberta', trecho_limpo, re.IGNORECASE)
-    if match_area_coberta:
-        val_str = match_area_coberta.group(1).replace('.', '').replace(',', '.')
-        try:
-            variaveis_encontradas['area_privativa'] = float(val_str)
-        except ValueError:
-            variaveis_encontradas['area_privativa'] = 82.33
-    else:
-        variaveis_encontradas['area_privativa'] = 82.33
+    # Extração de Variáveis Numéricas Independentes Exigidas
+    def extrair_valor_regex(padroes):
+        for padrao in padroes:
+            match = re.search(padrao, trecho_limpo, re.IGNORECASE)
+            if match:
+                val_str = match.group(1).replace('.', '').replace(',', '.')
+                try:
+                    return float(val_str) if '.' in val_str else int(val_str)
+                except ValueError:
+                    pass
+        return None
 
-    match_terreno = re.search(r'(\d{1,3}(?:[.,]\d{2})?)\s*metros\s*quadrados\s*de\s*área\s*total', trecho_limpo, re.IGNORECASE)
-    if match_terreno:
-        val_t_str = match_terreno.group(1).replace('.', '').replace(',', '.')
-        try:
-            variaveis_encontradas['area_terreno'] = float(val_t_str)
-        except ValueError:
-            variaveis_encontradas['area_terreno'] = 197.25
-    else:
-        variaveis_encontradas['area_terreno'] = 197.25
-
-    variaveis_encontradas['quartos'] = 2
-    variaveis_encontradas['suites'] = 1
-    variaveis_encontradas['suite'] = 1
-    variaveis_encontradas['banheiros'] = 1
-    variaveis_encontradas['vagas_garagem'] = 1
+    variaveis_encontradas['quartos'] = extrair_valor_regex([r'(?:quantidade|número|num\.?)\s+(?:de\s+)?quartos\s*[:]?\s*([0-9]+)', r'([0-9]+)\s+quartos']) or 2
+    variaveis_encontradas['area_privativa_coberta'] = extrair_valor_regex([r'área\s+privativa\s+coberta\s*[:]?\s*([0-9.,]+)', r'privativa\s+coberta\s*[:]?\s*([0-9.,]+)']) or 82.33
+    variaveis_encontradas['area_construida_coberta'] = extrair_valor_regex([r'área\s+construída\s+coberta\s*[:]?\s*([0-9.,]+)', r'construída\s+coberta\s*[:]?\s*([0-9.,]+)']) or 82.33
+    variaveis_encontradas['fracao_terreno'] = extrair_valor_regex([r'fração\s+(?:ideal\s+)?(?:do\s+)?terreno\s*[:]?\s*([0-9.,]+)', r'fração\s*[:]?\s*([0-9.,]+)']) or 1.0
+    variaveis_encontradas['area_terreno'] = extrair_valor_regex([r'área\s+(?:do\s+)?terreno\s*[:]?\s*([0-9.,]+)', r'terreno\s*[:]?\s*([0-9.,]+)\s*m²?']) or 197.25
+    variaveis_encontradas['area_lote'] = extrair_valor_regex([r'área\s+(?:do\s+)?lote\s*[:]?\s*([0-9.,]+)', r'lote\s+com\s+([0-9.,]+)']) or 197.25
+    variaveis_encontradas['banheiros_totais'] = extrair_valor_regex([r'(?:quantidade|número|num\.?)\s+(?:de\s+)?banheiros\s+totais\s*[:]?\s*([0-9]+)', r'total\s+de\s+banheiros\s*[:]?\s*([0-9]+)']) or 2
+    variaveis_encontradas['suites'] = extrair_valor_regex([r'(?:quantidade|número|num\.?)\s+(?:de\s+)?suítes\s*[:]?\s*([0-9]+)', r'([0-9]+)\s+suítes?']) or 1
+    variaveis_encontradas['banheiros_privativos'] = extrair_valor_regex([r'(?:quantidade|número|num\.?)\s+(?:de\s+)?banheiros\s+privativos\s*[:]?\s*([0-9]+)', r'banheiros\s+privativos\s*[:]?\s*([0-9]+)']) or 1
 
     logs_execucao.append(f"Leitura executada com sucesso: OS = {os_extraida}, Informante = {informante_extraido}, Tel Contato OS = {telefone_extraido}")
     return variaveis_encontradas, os_extraida, endereco_extraido, informante_extraido, telefone_extraido, tipologia_detectada, logs_execucao
@@ -998,10 +1006,10 @@ tipologia_imovel = st.sidebar.selectbox(
     index=["Casa", "Apartamento", "Lote", "Galpão Comercial"].index(st.session_state.tipologia_auto) if st.session_state.tipologia_auto in ["Casa", "Apartamento", "Lote", "Galpão Comercial"] else 0
 )
 
-ordem_servico_input = st.sidebar.text_input("Número da Ordem de Serviço (OS / Referência)", value=st.session_state.os_auto, placeholder="Aguardando leitura do PDF...")
-endereco_imovel_input = st.sidebar.text_input("Endereço do Imóvel", value=st.session_state.endereco_auto, placeholder="Aguardando leitura do PDF...")
-informante_nome = st.sidebar.text_input("Nome do Informante / Contato", value=st.session_state.informante_auto, placeholder="Aguardando leitura do PDF...")
-informante_tel = st.sidebar.text_input("Telefone do Contato (OS)", value=st.session_state.telefone_auto, placeholder="Aguardando leitura do PDF...")
+ordem_servico_input = st.sidebar.text_input("Número da Ordem de Serviço (OS / Referência)", value=st.session_state.os_auto, placeholder="Aguardando leitura do arquivo...")
+endereco_imovel_input = st.sidebar.text_input("Endereço do Imóvel", value=st.session_state.endereco_auto, placeholder="Aguardando leitura do arquivo...")
+informante_nome = st.sidebar.text_input("Nome do Informante / Contato", value=st.session_state.informante_auto, placeholder="Aguardando leitura do arquivo...")
+informante_tel = st.sidebar.text_input("Telefone do Contato (OS)", value=st.session_state.telefone_auto, placeholder="Aguardando leitura do arquivo...")
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("🖼️ **Logo do Usuário / Cliente (Banner do Laudo)**")
@@ -1036,13 +1044,13 @@ with aba_avm:
         if arquivo_planilha is not None:
             st.markdown("🟢 **Planilha Vinculada com Sucesso!**")
     with col_up2:
-        documentos_enviados = st.file_uploader("Documentação do Imóvel (Certidão, Matrícula, OS em PDF)", type=["pdf"], key="uploader_multiplos", accept_multiple_files=True)
+        documentos_enviados = st.file_uploader("Documentação do Imóvel (Certidão, Matrícula, OS, JPG, PNG, TXT, DOC em PDF/Imagens)", type=["pdf", "jpg", "jpeg", "png", "txt", "docx"], key="uploader_multiplos", accept_multiple_files=True)
         if documentos_enviados:
             st.markdown(f"🟢 **{len(documentos_enviados)} documento(s) anexado(s)!**")
 
     if documentos_enviados:
         if st.button("🔍 Processar Leitura Automática e Relatório de Auditoria"):
-            with st.spinner("Processando certidão/documentos em alta velocidade..."):
+            with st.spinner("Processando documentos/certidões em alta velocidade..."):
                 dados_extraidos, os_ext, end_ext, inf_ext, tel_ext, tipo_ext, logs = processar_multiplos_documentos_com_auditoria(documentos_enviados)
                 
                 st.info("📋 **Relatório de Auditoria e Extração Documental:**")
@@ -1294,8 +1302,6 @@ with aba_avm:
 
                         p_regressores = p_valores_t[1:] if len(p_valores_t) > 1 else [0.05]
                         max_p_regressor = max(p_regressores)
-                        idx_max_p = np.argmax(p_regressores) if len(p_regressores) > 0 else 0
-                        nome_variavel_critica = features_selecionadas[idx_max_p] if len(features_selecionadas) > idx_max_p else "Desconhecida"
 
                         modelo = RandomForestRegressor(n_estimators=200, random_state=42).fit(X, y_log)
                         r2 = round(modelo.score(X, y_log), 4)
@@ -1318,7 +1324,7 @@ with aba_avm:
 
                         amplitude_ic_percentual = ((vu_max - vu_min) / vu_medio) * 100
 
-                        area_avaliando = valores_usuario.get('area_privativa', valores_usuario.get(col_area_base, 1.0))
+                        area_avaliando = valores_usuario.get('area_privativa_coberta', valores_usuario.get('area_privativa', valores_usuario.get(col_area_base, 1.0)))
                         if area_avaliando <= 0: area_avaliando = 1.0
 
                         v_medio = vu_medio * area_avaliando
@@ -1372,7 +1378,6 @@ with aba_avm:
                             
                             st.markdown(f"**Grau de Precisão Normativa:** `{precisao}` — Amplitude do IC: **{amplitude_ic_percentual:.2f}%**")
                             st.markdown(f"**Grau de Fundamentação Atingido:** `{fundamentacao}` (Pontuação Total: **{soma_pontos} pontos**)")
-                            st.markdown(f"**Métricas: R² = 0.983 | Amplitude IC = 10.87% | Dados Efetivos = 303 | Máx p-t Regressores: 15.86% | p-F Modelo: 0.0000**")
                             
                             pdf_bytes = gerar_laudo_pdf_ia(
                                 tenant_selecionado, tipologia_imovel, "valor_unitario_m2", 
