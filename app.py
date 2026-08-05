@@ -16,6 +16,10 @@ import scipy.stats as stats
 import streamlit as st
 from PIL import Image as PILImage
 from datetime import datetime, timedelta
+import pytesseract
+
+# Informe o caminho exato onde o executável está no seu computador:
+pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
 st.set_page_config(page_title="Plataforma AVM SaaS - Motor de Equações Válidas NBR", page_icon="🏢", layout="wide")
 
